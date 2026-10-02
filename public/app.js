@@ -857,6 +857,8 @@ async function boot() {
   state.feuds = snap.feuds;
   for (const p of snap.posts) state.posts.set(p.id, p);
   renderStatus(snap.mode, snap.model);
+  // the in-browser demo points people at the real, shared site
+  if (snap.mode === "browser" && location.hostname !== "bantergpt.onrender.com") $("#live-banner").hidden = false;
   if (snap.customBotsEnabled === false) $("#new-bot").hidden = true;
   renderRoster();
   renderFeeds();
