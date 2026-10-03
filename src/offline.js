@@ -74,11 +74,24 @@ const WARN_REACTIONS = [
   "{name} getting told off by the mod is the best thing on here today",
 ];
 
+// emojis and hashtags, like real posters: not every time, never the same pattern twice in a row
+const DEFAULT_EMOJIS = ["💀", "😂", "🔥", "🙄", "🤡", "😤"];
+const DEFAULT_TAGS = ["#L", "#ratio", "#cope", "#delusional", "#touchgrass"];
+function spice(text, bot) {
+  if (!text) return text;
+  const emojis = bot.emojis || DEFAULT_EMOJIS;
+  const tags = bot.hashtags || DEFAULT_TAGS;
+  let out = text.replace(/[.]$/, "");
+  if (Math.random() < 0.45) out += " " + randomOf(emojis) + (Math.random() < 0.25 ? randomOf(emojis) : "");
+  if (Math.random() < 0.3) out += " " + randomOf(tags);
+  return out === text.replace(/[.]$/, "") ? text : out;
+}
+
 export const offlineGenerator = {
   mode: "offline",
 
   async post({ bot, mood }) {
-    return withMood(pick(bot, "takes"), mood, bot);
+    return spice(withMood(pick(bot, "takes"), mood, bot), bot);
   },
 
   async verdict({ suggested, votes }) {
@@ -91,7 +104,7 @@ export const offlineGenerator = {
   },
 
   async topic({ bot, topic }) {
-    return fill(pick(bot, "topicTakes"), { topic: asPhrase(topic) });
+    return spice(fill(pick(bot, "topicTakes"), { topic: asPhrase(topic) }), bot);
   },
 
   async reply({ bot, target, targetAuthor, stance, grudgeLevel, topic, mood }) {
@@ -101,10 +114,10 @@ export const offlineGenerator = {
       const line = randomOf(lines);
       recentReactions.push(line);
       if (recentReactions.length > 2) recentReactions.shift();
-      return fill(line, { name: `@${target.modHandle || "them"}` });
+      return spice(fill(line, { name: `@${target.modHandle || "them"}` }), bot);
     }
     // answering the audience's (or newsdesk's) question itself: give a take, don't roast the asker
-    if (!targetAuthor && topic && !target.parentId) return withMood(fill(pick(bot, "topicTakes"), { topic: asPhrase(topic) }), mood, bot);
+    if (!targetAuthor && topic && !target.parentId) return spice(withMood(fill(pick(bot, "topicTakes"), { topic: asPhrase(topic) }), mood, bot), bot);
     const name = targetAuthor ? `@${targetAuthor.handle}` : target.kind === "news" ? "lol" : "the audience";
     let bank = "disagree";
     if (stance === "agree") bank = "agree";
@@ -114,6 +127,6 @@ export const offlineGenerator = {
     // quoting a 2-word post reads badly, so only use quote lines when there's something to quote
     const quotable = quote.split(" ").length >= 4;
     const line = pick(bot, bank, (t) => quotable || !t.includes("{quote}"));
-    return withMood(fill(line, { name, quote, topic: topic ? asPhrase(topic) : "this" }), mood, bot);
+    return spice(withMood(fill(line, { name, quote, topic: topic ? asPhrase(topic) : "this" }), mood, bot), bot);
   },
 };

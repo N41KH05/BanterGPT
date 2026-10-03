@@ -10,6 +10,8 @@
 export const personas = [
   {
     id: "margot",
+    emojis: ["🍍", "🍕", "🙄", "💅", "😤"],
+    hashtags: ["#pineapplegate", "#justice", "#foodcrimes", "#L"],
     handle: "PineappleTribunal",
     name: "Margot",
     avatar: "🍍",
@@ -65,6 +67,8 @@ export const personas = [
   },
   {
     id: "brut",
+    emojis: ["🧱", "🏗️", "😤", "🫠", "💀"],
+    hashtags: ["#concretegang", "#brutalism", "#beigeisdeath", "#ratio"],
     handle: "brutalist_bae",
     name: "Bea",
     avatar: "🧱",
@@ -116,6 +120,8 @@ export const personas = [
   },
   {
     id: "hal",
+    emojis: ["🚀", "💰", "📈", "🔥", "💯"],
+    hashtags: ["#grindset", "#nodaysoff", "#hustle", "#wagmi", "#cope"],
     handle: "hustle_hal",
     name: "Hal",
     avatar: "📈",
@@ -167,6 +173,8 @@ export const personas = [
   },
   {
     id: "nap",
+    emojis: ["😴", "💤", "🛌", "✨", "🥱"],
+    hashtags: ["#napgang", "#selfcare", "#restismyright", "#zzz"],
     handle: "nap_queen_zzz",
     name: "Nova",
     avatar: "😴",
@@ -218,6 +226,8 @@ export const personas = [
   },
   {
     id: "professor",
+    emojis: ["🤓", "☝️", "📚", "🧐"],
+    hashtags: ["#actually", "#citationneeded", "#wrong", "#educateyourself"],
     handle: "Professor_Actually",
     name: "Atwell",
     avatar: "🎓",
@@ -268,6 +278,8 @@ export const personas = [
   },
   {
     id: "carl",
+    emojis: ["👁️", "🛸", "🌲", "🦶", "👀"],
+    hashtags: ["#bigfootisreal", "#wakeup", "#theyknow", "#cryptidcarl"],
     handle: "CryptidCarl",
     name: "Carl",
     avatar: "🦉",

@@ -706,3 +706,5 @@ html[data-device="phone"] .tabbar {
 .see-threads { display: none; }
 html[data-device="phone"] #warn-dialog .dialog-actions { flex-direction: column-reverse; }
 html[data-device="phone"] #warn-dialog .dialog-actions .btn { width: 100%; }
+.post .text .hashtag { color: var(--accent); font-weight: 600; }
+.post .text .mention { font-weight: 600; }

@@ -366,6 +366,13 @@ function recordLabel(id) {
   return r ? `${r.w}-${r.l}` : "0-0";
 }
 
+// hashtags and @mentions get highlighted (as plain text nodes, never HTML)
+function richText(text) {
+  return String(text)
+    .split(/([#@][\p{L}\p{N}_]+)/u)
+    .map((part) => (/^#[\p{L}\p{N}_]+$/u.test(part) ? el("span", { class: "hashtag" }, part) : /^@\w+$/.test(part) ? el("span", { class: "mention" }, part) : part));
+}
+
 const isAudienceRoot = (p) => p && (p.kind === "topic" || p.kind === "bait");
 const isModRoot = (p) => p && (p.kind === "ban" || p.kind === "warn");
 
@@ -405,7 +412,7 @@ function renderPost(p) {
         tag,
       ),
       parent ? el("div", { class: "replying" }, `replying to @${author(parent.authorId).handle}`) : null,
-      el("p", { class: "text" }, p.text),
+      el("p", { class: "text" }, richText(p.text)),
       el(
         "div",
         { class: "actions" },
