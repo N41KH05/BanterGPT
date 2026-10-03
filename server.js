@@ -141,6 +141,7 @@ engine.on("persona", (p) => broadcast("persona", p));
 engine.on("removed", (ids) => broadcast("removed", ids));
 engine.on("records", (r) => broadcast("records", r));
 engine.on("relations", (r) => broadcast("relations", r));
+engine.on("season", (s) => broadcast("season", s));
 setInterval(() => {
   for (const res of clients) res.write(": ping\n\n");
 }, 25000);
@@ -188,10 +189,14 @@ function clientIp(req) {
 const hits = new Map();
 const botsMade = new Map(); // ip -> timestamps of bots created (max 3 per 10 minutes)
 const voters = new Map(); // thread id -> set of visitor IPs that voted (one vote each)
+const reports = new Map(); // ip -> timestamps of reports (max 10 per 10 minutes)
+const reporters = new Map(); // post id -> set of visitor IPs that reported it
+const cleared = new Set(); // post ids the AI already checked after a report and kept
+const REPORTS_TO_HIDE = 3; // without an AI, this many separate reports take a post down
 // forget visitors we haven't seen for a while so these maps don't grow forever
 setInterval(() => {
   const cutoff = Date.now() - 15 * 60_000;
-  for (const map of [hits, botsMade]) {
+  for (const map of [hits, botsMade, reports]) {
     for (const [ip, times] of map) if (!times.some((t) => t > cutoff)) map.delete(ip);
   }
 }, 10 * 60_000).unref();
@@ -341,6 +346,50 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === "/api/summon") {
         const ok = engine.summon(String(body.botId), String(body.postId));
         return json(res, ok ? 200 : 404, ok ? { ok } : { error: "Unknown bot or post" });
+      }
+      if (url.pathname === "/api/report") {
+        const postId = String(body.postId || "");
+        const post = engine.posts.get(postId);
+        if (!post) return json(res, 404, { error: "That post is already gone." });
+        if (post.authorId === "moderator") return json(res, 400, { error: "You can't report the moderator." });
+        const ip = clientIp(req);
+        const now = Date.now();
+        const recent = (reports.get(ip) || []).filter((t) => now - t < 10 * 60_000);
+        if (recent.length >= 10) return json(res, 429, { error: "That's a lot of reports. Give it a few minutes." });
+        const seen = reporters.get(postId) || new Set();
+        if (seen.has(ip)) return json(res, 400, { error: "You've already reported this one." });
+        seen.add(ip);
+        reporters.set(postId, seen);
+        reports.set(ip, [...recent, now]);
+        if (reporters.size > 2000) reporters.delete(reporters.keys().next().value);
+
+        const authorBot = engine.author(post.authorId);
+        const isBot = Boolean(authorBot && !authorBot.system && authorBot.voice);
+        if (live && !cleared.has(postId)) {
+          // the moderator re-checks it right now (an AI that can't decide doesn't keep it up)
+          const text = isBot ? `Character profile:\n${describeBot(authorBot)}\n\nThe reported post:\n${post.text}` : post.text;
+          const review = await llm.aiReview(isBot ? "reported post by a character" : "reported post", text, { failOpen: false });
+          if (!review.allowed && review.reason !== "couldn't be checked right now") {
+            const reason = review.refused ? "hate" : review.reason;
+            console.log(`[moderation] report upheld on post ${postId} by ${post.authorId}: ${reason}`);
+            // a refusal takes the post down without a strike
+            if (review.refused) engine.removePosts((p) => p.id === postId);
+            else await engine.upholdReport(postId, reason);
+            return json(res, 200, { removed: true, message: "The moderator agreed. It's gone." });
+          }
+          if (review.allowed) {
+            cleared.add(postId);
+            console.log(`[moderation] report rejected on post ${postId}`);
+            return json(res, 200, { removed: false, message: "The moderator checked it. Edgy, but allowed. It stays." });
+          }
+        }
+        // no AI (or it's down): enough separate reports take it down, no strike
+        if (seen.size >= REPORTS_TO_HIDE && !cleared.has(postId)) {
+          engine.removePosts((p) => p.id === postId);
+          console.log(`[moderation] post ${postId} hidden after ${seen.size} reports`);
+          return json(res, 200, { removed: true, message: "Enough people reported it. It's gone." });
+        }
+        return json(res, 200, { removed: false, message: cleared.has(postId) ? "The moderator already checked this one. It stays." : "Thanks. Reported." });
       }
       if (url.pathname === "/api/cheer") {
         const p = engine.cheer(String(body.postId));

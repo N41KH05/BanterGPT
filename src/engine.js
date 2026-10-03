@@ -89,7 +89,16 @@ const CANCEL_LINES = [
   "📉 @{h} has been CANCELLED for {why}. Pack it up, it's over.",
   "📉 BREAKING: the timeline has spoken. @{h} is cancelled after {why}.",
 ];
-const GRACE_MS = 45 * 60_000; // new visitor bots can't be cancelled for this long
+const GRACE_MS = 45 * 60_000;
+
+// weekly seasons: records reset every Monday 00:00 UTC and the best bot is crowned
+const WEEK_MS = 7 * 24 * 3_600_000;
+function seasonStart(ts) {
+  const d = new Date(ts);
+  const sinceMonday = (d.getUTCDay() + 6) % 7;
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - sinceMonday);
+}
+const HALL_SIZE = 20; // new visitor bots can't be cancelled for this long
 
 const BETRAYAL_LINES = [
   "BREAKING: @{a} has turned on @{b}. The alliance is over.",
@@ -114,6 +123,9 @@ export class Engine extends Emitter {
     this.relations = {}; // botId -> { rivals, allies } after shake-ups change them
     this.lastAutoTopicAt = 0;
     this.cancelMs = cancelMs; // how often the weakest visitor bot can get cancelled
+    this.season = { number: 1, start: seasonStart(Date.now()) };
+    this.champion = null; // last season's winner (wears the crown)
+    this.hallOfFame = []; // past champions, newest first
     this.lastCancelAt = Date.now();
     this.lastShakeupAt = Date.now();
     this.startedAt = Date.now();
@@ -208,6 +220,7 @@ export class Engine extends Emitter {
       posts: this.order.map((id) => this.posts.get(id)),
       feuds: this.feuds(),
       records: this.publicRecords(),
+      season: this.publicSeason(),
     };
   }
 
@@ -531,6 +544,69 @@ export class Engine extends Emitter {
     }
   }
 
+  // ---------- seasons ----------
+
+  publicSeason() {
+    return {
+      number: this.season.number,
+      start: this.season.start,
+      endsAt: this.season.start + WEEK_MS,
+      champion: this.champion,
+      hallOfFame: this.hallOfFame,
+    };
+  }
+
+  // Monday: crown the best record, put it in the Hall of Fame and wipe everyone's record
+  endSeason() {
+    const ranked = Object.entries(this.records)
+      .map(([id, r]) => ({ bot: personaById[id], w: r.w, l: r.l }))
+      .filter((x) => x.bot && !x.bot.banned && x.w > 0)
+      .sort((a, b) => b.w - a.w || b.w - b.l - (a.w - a.l) || a.l - b.l);
+    const [best, second] = ranked;
+    const number = this.season.number;
+    if (best) {
+      const { bot, w, l } = best;
+      this.hallOfFame = [{ season: number, id: bot.id, name: bot.name, handle: bot.handle, avatar: bot.avatar, w, l, at: Date.now() }, ...this.hallOfFame].slice(0, HALL_SIZE);
+      this.champion = bot.id;
+    } else {
+      this.champion = null;
+    }
+    this.records = {};
+    this.season = { number: number + 1, start: seasonStart(Date.now()) };
+    this.dirty = true;
+    this.emit("records", this.publicRecords());
+    this.emit("season", this.publicSeason());
+
+    const text = best
+      ? `👑 SEASON ${number} IS OVER. @${best.bot.handle} is your champion at ${best.w}-${best.l}. Every record is wiped. Season ${number + 1} starts now.`
+      : `SEASON ${number} IS OVER. Nobody won a single thing. Records wiped. Season ${number + 1} starts now.`;
+    const post = this.addPost({ authorId: NEWS.id, text, kind: "news", extra: { newsType: "season", champion: best?.bot.id || null, championHandle: best?.bot.handle || null } });
+    if (!post || !best) return;
+    this.remember(best.bot.id, `You were crowned champion of season ${number}. You'll never let anyone forget it.`);
+    if (!best.bot.retired) this.queue.push(() => this.reply(best.bot, post, "agree"));
+    if (second && !second.bot.retired) {
+      this.remember(second.bot.id, `You finished runner-up in season ${number}, behind @${best.bot.handle}. Robbed.`);
+      this.bumpGrudge(second.bot.id, best.bot.id, 2);
+      this.queue.push(() => this.reply(second.bot, post, "disagree"));
+    }
+  }
+
+  // ---------- reports ----------
+
+  // a visitor reported a post and the moderator agreed: it comes down, and a visitor bot gets a strike
+  async upholdReport(postId, reason) {
+    const post = this.posts.get(postId);
+    if (!post) return false;
+    const bot = personaById[post.authorId];
+    if (bot && bot.custom && !bot.banned) {
+      await this.handleViolation(bot, reason || "hate", { removeIds: new Set([postId]) });
+      if (this.posts.has(postId)) this.removePosts((p) => p.id === postId); // in case the check was queued
+    } else {
+      this.removePosts((p) => p.id === postId);
+    }
+    return true;
+  }
+
   // ---------- cancel culture ----------
 
   // how well a visitor bot is doing: wins, likes from other bots and cheers from the audience
@@ -614,6 +690,9 @@ export class Engine extends Emitter {
       relations: this.relations,
       lastAutoTopicAt: this.lastAutoTopicAt,
       lastCancelAt: this.lastCancelAt,
+      season: this.season,
+      champion: this.champion,
+      hallOfFame: this.hallOfFame,
       strikes: this.strikes,
       reviewedUpTo: this.reviewedUpTo,
       salt: this.salt,
@@ -647,6 +726,9 @@ export class Engine extends Emitter {
     }
     this.lastAutoTopicAt = data.lastAutoTopicAt || 0;
     this.lastCancelAt = data.lastCancelAt || Date.now();
+    if (data.season) this.season = data.season;
+    this.champion = data.champion || null;
+    this.hallOfFame = data.hallOfFame || [];
     this.strikes = data.strikes || {};
     this.reviewedUpTo = data.reviewedUpTo || {};
     if (data.salt) this.salt = data.salt;
@@ -835,6 +917,10 @@ export class Engine extends Emitter {
 
   async maintenance() {
     const now = Date.now();
+    if (seasonStart(now) !== this.season.start) {
+      this.endSeason();
+      return true;
+    }
     const due = this.threadDueForVerdict(now);
     if (due) {
       await this.judge(due);

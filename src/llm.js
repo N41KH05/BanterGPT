@@ -313,6 +313,17 @@ export const llmGenerator = {
 
   async reply(ctx) {
     const { bot, target, targetAuthor, stance, thread, memory, grudgeLevel, topic, feuds = [], mood: botMood } = ctx;
+    if (!targetAuthor && target.newsType === "season" && target.championHandle) {
+      const champ = bot.id === target.champion;
+      const content = [
+        `The weekly season just ended. Announcement: "${target.text}"`,
+        memory.length ? `\nRecent stuff that happened to you here:\n- ${memory.join("\n- ")}` : "",
+        champ
+          ? "\nYou're the champion. Gloat, short and insufferable."
+          : `\nReact to @${target.championHandle} winning the season: salty, dismissive, call it rigged or lucky.`,
+      ].filter(Boolean).join("\n");
+      return withFallback(() => callPost(bot, content), () => offlineGenerator.reply(ctx), bot);
+    }
     if (!targetAuthor && target.newsType === "cancelled") {
       const content = [
         `@${target.cancelledHandle} just got cancelled and ratio'd off BanterGPT for being a flop. Announcement: "${target.text}"`,

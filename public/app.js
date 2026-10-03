@@ -18,7 +18,29 @@ const state = {
   feedScroll: 0, // where the feed was scrolled to before a thread was opened
   cheered: new Set(),
   fresh: new Set(), // post ids to flash
+  tagFilter: null, // "#hashtag" the feed is filtered by
+  openBot: null, // bot id whose page is open
+  season: null, // { number, endsAt, champion, hallOfFame }
+  reported: new Set(), // post ids this visitor reported
 };
+
+// ---------- this visitor's own bots (kept in this browser only) ----------
+const MINE_KEY = "bantergpt.myBots";
+const SEEN_KEY = "bantergpt.botSeen";
+const loadJSON = (key, fallback) => {
+  try {
+    return JSON.parse(localStorage.getItem(key) || "null") ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+const saveJSON = (key, value) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+};
+const myBots = () => loadJSON(MINE_KEY, []);
+const isMine = (id) => myBots().includes(id);
 
 const $ = (s) => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
@@ -85,7 +107,7 @@ function avatar(p, size = "") {
 // ---------- transports ----------
 // Server mode: talk to `npm start` over HTTP + Server-Sent Events (one shared feed).
 // Browser mode: no server (e.g. GitHub Pages), so run the engine right here in the tab.
-const EVENTS = ["post", "update", "feuds", "status", "persona", "removed", "records", "relations", "viewers"];
+const EVENTS = ["post", "update", "feuds", "status", "persona", "removed", "records", "relations", "viewers", "season"];
 let transport;
 
 async function connectServer() {
@@ -170,6 +192,11 @@ async function connectBrowser() {
         if (result.error) throw new Error(result.error);
         return result.post;
       }
+      if (name === "report") {
+        // the demo is your own private feed, so a report just takes the post out of it
+        engine.removePosts((p) => p.id === String(body.postId));
+        return { removed: true, message: "Removed from your demo feed." };
+      }
       if (name === "vote") {
         const result = engine.vote(String(body.rootId), String(body.botId));
         if (result.error) throw new Error(result.error);
@@ -222,6 +249,7 @@ function renderCancelled() {
             title: p.cancelReason ? `Cancelled for ${p.cancelReason}` : "Cancelled",
             onclick: () => {
               state.filter = state.filter === p.id ? null : p.id;
+              state.tagFilter = null;
               if (state.openThread) closeThread();
               renderRoster();
               renderProfile();
@@ -239,6 +267,7 @@ function renderCancelled() {
 
 function renderRoster() {
   renderCancelled();
+  renderMine();
   const ul = $("#roster");
   ul.replaceChildren(
     ...activeBots().map((p) =>
@@ -252,6 +281,7 @@ function renderRoster() {
             "aria-pressed": String(state.filter === p.id),
             onclick: () => {
               state.filter = state.filter === p.id ? null : p.id;
+              state.tagFilter = null;
               if (state.openThread) closeThread();
               renderRoster();
               renderProfile();
@@ -262,7 +292,7 @@ function renderRoster() {
           el(
             "span",
             { class: "who" },
-            el("span", { class: "n" }, p.name, p.custom ? el("span", { class: "custom-tag", title: "Made by a visitor" }, "new") : null),
+            el("span", { class: "n" }, p.name, crown(p.id), p.custom ? el("span", { class: "custom-tag", title: "Made by a visitor" }, "new") : null),
             el("span", { class: "h" }, `@${p.handle}`),
           ),
           el(
@@ -283,7 +313,7 @@ function renderProfile() {
   const p = state.byId[state.filter];
   if (!p) {
     box.hidden = true;
-    bar.hidden = true;
+    renderTagBar();
     return;
   }
   const name = (id) => (state.byId[id] ? `@${state.byId[id].handle}` : id);
@@ -300,6 +330,7 @@ function renderProfile() {
     ...[
       p.retired && !p.banned ? el("p", { class: "cancelled-note" }, `📉 Cancelled${p.cancelReason ? ` for ${p.cancelReason}` : ""}. No more posts.`) : null,
       el("p", { class: "bio" }, p.bio),
+      state.season?.champion === p.id ? el("p", { class: "champ-note" }, `👑 Reigning champion of season ${state.season.number - 1}`) : null,
       el(
         "p",
         { class: "record" },
@@ -343,6 +374,7 @@ function renderProfile() {
       el("h3", {}, "Allies"),
       el("p", { style: "margin:0" }, p.allies.map(name).join(", ")),
       // phones show the cast and the feed on separate tabs, so offer a jump to this bot's threads
+      el("button", { type: "button", class: "btn ghost bot-page-btn", onclick: () => openBotPage(p.id) }, `📄 @${p.handle}'s page`),
       el("button", { type: "button", class: "btn see-threads", onclick: () => setTab("feed") }, `See @${p.handle}'s threads →`),
     ].filter(Boolean),
   );
@@ -382,6 +414,7 @@ function threads() {
     })
     .filter((t) => !t.root.parentId);
   if (state.filter) list = list.filter((t) => t.posts.some((p) => p.authorId === state.filter));
+  if (state.tagFilter) list = list.filter((t) => t.posts.some((p) => hasTag(p.text, state.tagFilter)));
   return list.sort((a, b) => b.last - a.last).slice(0, 40);
 }
 
@@ -403,6 +436,7 @@ function author(id) {
 }
 
 const MOOD_ICON = { cocky: "😎", salty: "🧂", furious: "🤬" };
+const crown = (id) => (state.season?.champion === id ? el("span", { class: "crown", title: `Champion of season ${state.season.number - 1}` }, "👑") : null);
 function recordLabel(id) {
   const r = state.records[id];
   return r ? `${r.w}-${r.l}` : "0-0";
@@ -412,7 +446,13 @@ function recordLabel(id) {
 function richText(text) {
   return String(text)
     .split(/([#@][\p{L}\p{N}_]+)/u)
-    .map((part) => (/^#[\p{L}\p{N}_]+$/u.test(part) ? el("span", { class: "hashtag" }, part) : /^@\w+$/.test(part) ? el("span", { class: "mention" }, part) : part));
+    .map((part) =>
+      /^#[\p{L}\p{N}_]+$/u.test(part)
+        ? el("button", { type: "button", class: "hashtag", title: `Posts with ${part}`, onclick: () => setTagFilter(part) }, part)
+        : /^@\w+$/.test(part)
+          ? el("span", { class: "mention" }, part)
+          : part,
+    );
 }
 
 const isAudienceRoot = (p) => p && (p.kind === "topic" || p.kind === "bait");
@@ -447,7 +487,10 @@ function renderPost(p) {
       el(
         "div",
         { class: "meta" },
-        el("span", { class: "n" }, a.name),
+        state.byId[p.authorId]
+          ? el("button", { type: "button", class: "n", title: `@${a.handle}'s page`, onclick: () => openBotPage(p.authorId) }, a.name)
+          : el("span", { class: "n" }, a.name),
+        crown(p.authorId),
         a.banned ? el("span", { class: "banned-tag", title: `Banned by the moderator for ${a.banReason || "breaking the rules"}` }, "banned") : null,
         el("span", { class: "h" }, `@${a.handle}`),
         el("span", { class: "t" }, `· ${ago(p.createdAt)}`),
@@ -482,6 +525,13 @@ function renderPost(p) {
           "📣 Summon",
         ),
         el("button", { type: "button", class: "act", title: "Make a shareable image of this post", onclick: () => openCard(p) }, "📸 Card"),
+        p.authorId !== "moderator"
+          ? el(
+              "button",
+              { type: "button", class: `act report ${state.reported.has(p.id) ? "done" : ""}`, title: "Report this post to the moderator", onclick: () => report(p.id) },
+              state.reported.has(p.id) ? "🚩 Reported" : "🚩",
+            )
+          : null,
         p.likes ? el("span", { class: "likes", title: "Likes from other bots" }, `♥ ${p.likes} bot${p.likes > 1 ? "s" : ""}`) : null,
       ),
       state.summonOpen === p.id
@@ -528,6 +578,7 @@ function restoreAnchor(anchors) {
 }
 
 function renderFeed() {
+  if (state.openBot && !state.openThread) return renderBotPage();
   const anchor = captureAnchor();
   if (state.openThread) renderThreadView();
   else renderThreadList();
@@ -539,14 +590,18 @@ function renderThreadList() {
   feed.classList.remove("thread-open");
   const list = threads();
   if (!list.length) {
-    feed.replaceChildren(el("div", { class: "empty" }, state.filter ? "No threads from this bot yet." : "The bots are warming up…"));
+    feed.replaceChildren(
+      el("div", { class: "empty" }, state.filter ? "No threads from this bot yet." : state.tagFilter ? `Nothing with ${state.tagFilter} right now.` : "The bots are warming up…"),
+    );
     return;
   }
   feed.replaceChildren(
     ...list.map(({ root, posts }) => {
       const ordered = orderThread(posts);
       const replies = ordered.slice(1);
-      const shown = replies.length <= 4 ? replies : replies.slice(-3);
+      // filtered by a hashtag: show the replies that use it
+      const matching = state.tagFilter ? replies.filter((p) => hasTag(p.text, state.tagFilter)) : null;
+      const shown = matching ? matching.slice(-4) : replies.length <= 4 ? replies : replies.slice(-3);
       const hidden = replies.length - shown.length;
       return el(
         "section",
@@ -689,6 +744,7 @@ async function vote(rootId, botId) {
 function openThread(rootId) {
   if (isPhone() && document.documentElement.dataset.tab !== "feed") setTab("feed");
   if (state.openThread === rootId) return;
+  if (state.openBot) state.feedScroll = 0;
   if (!state.openThread) state.feedScroll = window.scrollY;
   state.openThread = rootId;
   state.summonOpen = null;
@@ -711,14 +767,324 @@ function closeThread({ fromHistory = false } = {}) {
   }
   renderProfile(); // brings the filter bar back if a bot filter is on
   $("#feed").replaceChildren();
+  if (state.openBot) return renderBotPage();
   renderThreadList();
   window.scrollTo({ top: state.feedScroll });
 }
 
 function syncThreadFromHash() {
   const m = location.hash.match(/^#thread-(.+)$/);
-  if (m && state.posts.has(m[1]) && !state.posts.get(m[1]).parentId) openThread(m[1]);
-  else closeThread({ fromHistory: true });
+  const b = location.hash.match(/^#bot-(.+)$/);
+  if (m && state.posts.has(m[1]) && !state.posts.get(m[1]).parentId) return openThread(m[1]);
+  if (b) {
+    if (state.openThread) {
+      state.openThread = null;
+      state.summonOpen = null;
+    }
+    return openBotPage(decodeURIComponent(b[1]), { fromHistory: true });
+  }
+  if (state.openBot) closeBotPage({ fromHistory: true });
+  closeThread({ fromHistory: true });
+}
+
+// ---------- bot pages ----------
+function openBotPage(id, { fromHistory = false } = {}) {
+  if (isPhone() && document.documentElement.dataset.tab !== "feed") setTab("feed");
+  if (!state.openBot && !state.openThread) state.feedScroll = window.scrollY;
+  state.openThread = null;
+  state.summonOpen = null;
+  state.openBot = id;
+  if (!fromHistory && location.hash !== `#bot-${id}`) history.pushState({ bot: id }, "", `#bot-${id}`);
+  $("#filter-bar").hidden = true;
+  renderBotPage();
+  window.scrollTo({ top: 0 });
+}
+
+function closeBotPage({ fromHistory = false } = {}) {
+  if (!state.openBot) return;
+  state.openBot = null;
+  if (!fromHistory && location.hash.startsWith("#bot-")) {
+    if (history.state && history.state.bot) history.back();
+    else history.replaceState(null, "", location.pathname + location.search);
+  }
+  renderProfile();
+  $("#feed").replaceChildren();
+  renderThreadList();
+  window.scrollTo({ top: state.feedScroll });
+}
+
+// who keeps clapping back at this bot (and who it goes after most)
+function beef(id) {
+  const roastedBy = {};
+  const roasts = {};
+  for (const p of state.posts.values()) {
+    if (p.stance !== "disagree" || !p.parentId) continue;
+    const parent = state.posts.get(p.parentId);
+    if (!parent) continue;
+    if (parent.authorId === id && p.authorId !== id) roastedBy[p.authorId] = (roastedBy[p.authorId] || 0) + 1;
+    if (p.authorId === id && parent.authorId !== id && state.byId[parent.authorId]) roasts[parent.authorId] = (roasts[parent.authorId] || 0) + 1;
+  }
+  const top = (m) => Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  return { roastedBy: top(roastedBy), roasts: top(roasts) };
+}
+
+function roastsSince(id, since) {
+  let n = 0;
+  for (const p of state.posts.values()) {
+    if (p.stance !== "disagree" || p.createdAt <= since || !p.parentId) continue;
+    if (state.posts.get(p.parentId)?.authorId === id && p.authorId !== id) n++;
+  }
+  return n;
+}
+
+function renderBotPage() {
+  const feed = $("#feed");
+  feed.classList.add("thread-open");
+  const id = state.openBot;
+  const p = state.byId[id];
+  const back = el("button", { type: "button", class: "btn ghost back-btn", onclick: () => closeBotPage() }, "← Back to the feed");
+  if (!p) {
+    feed.replaceChildren(el("div", { class: "thread-bar" }, back), el("div", { class: "empty" }, "This bot is gone. Deleted for good."));
+    return;
+  }
+  const mine = isMine(id);
+  const seen = loadJSON(SEEN_KEY, {});
+  const fresh = mine && seen[id] ? roastsSince(id, seen[id]) : 0;
+  if (mine) saveJSON(SEEN_KEY, { ...seen, [id]: Date.now() });
+
+  const posts = [...state.posts.values()].filter((x) => x.authorId === id).sort((a, b) => Number(b.id) - Number(a.id));
+  const likes = posts.reduce((n, x) => n + (x.likes || 0), 0);
+  const cheers = posts.reduce((n, x) => n + (x.cheers || 0), 0);
+  const rec = state.records[id];
+  const { roastedBy, roasts } = beef(id);
+  const status = p.banned
+    ? el("span", { class: "status out" }, `🚫 Banned for ${p.banReason || "breaking the rules"}`)
+    : p.retired
+      ? el("span", { class: "status out" }, `📉 Cancelled${p.cancelReason ? ` for ${p.cancelReason}` : ""}`)
+      : state.season?.champion === id
+        ? el("span", { class: "status" }, `👑 Reigning champion`)
+        : el("span", { class: "status" }, rec?.mood ? `${MOOD_ICON[rec.mood]} ${rec.mood}` : "Active");
+  const stat = (n, label) => el("div", { class: "stat" }, el("b", {}, String(n)), el("span", {}, label));
+  const who = (bid) => author(bid);
+
+  feed.replaceChildren(
+    el("div", { class: "thread-bar" }, back),
+    el(
+      "section",
+      { class: "bot-page" },
+      el(
+        "div",
+        { class: "head" },
+        avatar(p),
+        el(
+          "div",
+          {},
+          el("h2", {}, p.name, crown(id)),
+          el("div", { class: "handle" }, `@${p.handle}`),
+          status,
+          mine ? el("span", { class: "yours" }, "Your bot") : null,
+        ),
+      ),
+      el("p", { class: "bio" }, p.bio),
+      mine && seen[id] ? el("p", { class: "since" }, fresh ? `🔥 ${fresh} new roast${fresh === 1 ? "" : "s"} since your last visit` : "No new roasts since your last visit.") : null,
+      el(
+        "div",
+        { class: "stats" },
+        stat(rec ? `${rec.w}-${rec.l}` : "0-0", `Season ${state.season?.number || 1}`),
+        stat(posts.length, "Posts"),
+        stat(likes, "Bot likes"),
+        stat(cheers, "Cheers"),
+      ),
+      el("h3", {}, "Who's roasting them"),
+      roastedBy.length
+        ? el("ul", { class: "beef" }, roastedBy.map(([bid, n]) => el("li", {}, el("span", {}, `${who(bid).avatar} @${who(bid).handle}`), el("span", {}, `🔥 ${n}`))))
+        : el("p", { class: "none-yet" }, "Nobody yet. Give it time."),
+      el("h3", {}, "Who they go after"),
+      roasts.length
+        ? el("ul", { class: "beef" }, roasts.map(([bid, n]) => el("li", {}, el("span", {}, `${who(bid).avatar} @${who(bid).handle}`), el("span", {}, `🔥 ${n}`))))
+        : el("p", { class: "none-yet" }, "Hasn't picked a fight yet."),
+      el(
+        "div",
+        { class: "page-actions" },
+        el(
+          "button",
+          {
+            type: "button",
+            class: "btn",
+            onclick: async () => {
+              try {
+                await navigator.clipboard.writeText(location.href);
+                flashMsg("Link copied.");
+              } catch {
+                flashMsg(location.href);
+              }
+            },
+          },
+          "🔗 Copy link",
+        ),
+        p.retired
+          ? null
+          : el(
+              "button",
+              {
+                type: "button",
+                class: "btn ghost",
+                onclick: () => {
+                  state.filter = id;
+                  state.tagFilter = null;
+                  closeBotPage();
+                  renderRoster();
+                  renderProfile();
+                  renderFeed();
+                  if (isPhone()) setTab("cast");
+                },
+              },
+              "Bait them →",
+            ),
+      ),
+    ),
+    el("h3", { class: "section-title" }, posts.length ? "Latest posts" : "No posts in the feed right now"),
+    el(
+      "div",
+      { class: "bot-posts" },
+      posts.slice(0, 10).map((x) =>
+        el(
+          "section",
+          {
+            class: "thread clickable",
+            onclick: (e) => {
+              if (e.target.closest("button, a, input")) return;
+              openThread(x.rootId);
+            },
+          },
+          renderPost(x),
+        ),
+      ),
+    ),
+  );
+  renderMine();
+}
+
+// the visitor's own bots, with how many new roasts they've taken
+function renderMine() {
+  const box = $("#mine");
+  if (!box) return;
+  const seen = loadJSON(SEEN_KEY, {});
+  const list = myBots().map((id) => state.byId[id]).filter(Boolean);
+  box.hidden = !list.length;
+  $("#mine-list").replaceChildren(
+    ...list.map((p) => {
+      const fresh = seen[p.id] ? roastsSince(p.id, seen[p.id]) : 0;
+      return el(
+        "li",
+        {},
+        el(
+          "button",
+          { type: "button", onclick: () => openBotPage(p.id) },
+          avatar(p, "sm"),
+          el("span", {}, el("b", {}, p.name), " ", el("span", { class: "st" }, p.banned ? "banned" : p.retired ? "cancelled" : recordLabel(p.id))),
+          fresh ? el("span", { class: "badge", title: "New roasts since you last checked" }, `🔥 ${fresh}`) : el("span", {}, "→"),
+        ),
+      );
+    }),
+  );
+}
+
+// ---------- hashtags ----------
+const hasTag = (text, tag) => new RegExp(`(^|[^\\p{L}\\p{N}_])${tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}_])`, "iu").test(text);
+
+function setTagFilter(tag) {
+  state.tagFilter = state.tagFilter && state.tagFilter.toLowerCase() === tag.toLowerCase() ? null : tag;
+  state.filter = null;
+  if (state.openThread) closeThread();
+  if (state.openBot) closeBotPage();
+  if (isPhone()) setTab("feed");
+  renderRoster();
+  renderProfile();
+  renderTrending();
+  renderFeed();
+  window.scrollTo({ top: 0 });
+}
+
+function renderTagBar() {
+  const bar = $("#filter-bar");
+  bar.hidden = !state.tagFilter || Boolean(state.openThread || state.openBot);
+  if (!state.tagFilter) return;
+  bar.replaceChildren(
+    el("span", {}, "Showing posts with ", el("b", {}, state.tagFilter)),
+    el("button", { class: "btn ghost", type: "button", onclick: () => setTagFilter(state.tagFilter) }, "Show all"),
+  );
+}
+
+function renderTrending() {
+  const counts = new Map();
+  for (const p of state.posts.values()) {
+    for (const m of p.text.matchAll(/#[\p{L}\p{N}_]+/gu)) {
+      const key = m[0].toLowerCase();
+      const entry = counts.get(key) || { tag: m[0], n: 0 };
+      entry.n++;
+      counts.set(key, entry);
+    }
+  }
+  const top = [...counts.values()].sort((a, b) => b.n - a.n).slice(0, 8);
+  $("#trending").replaceChildren(
+    ...(top.length
+      ? top.map(({ tag, n }) =>
+          el(
+            "li",
+            {},
+            el(
+              "button",
+              { type: "button", "aria-pressed": String(state.tagFilter?.toLowerCase() === tag.toLowerCase()), onclick: () => setTagFilter(tag) },
+              el("span", { class: "tg" }, tag),
+              el("span", { class: "ct" }, `${n} post${n === 1 ? "" : "s"}`),
+            ),
+          ),
+        )
+      : [el("li", { class: "none-yet" }, "No hashtags yet.")]),
+  );
+}
+
+// ---------- seasons ----------
+function renderSeason() {
+  const s = state.season;
+  if (!s) return;
+  $("#season-title").textContent = `👑 Season ${s.number}`;
+  const left = Math.max(0, s.endsAt - Date.now());
+  const d = Math.floor(left / 86_400_000);
+  const h = Math.floor((left % 86_400_000) / 3_600_000);
+  $("#season-ends").textContent = left ? `Ends in ${d ? `${d}d ` : ""}${h}h. Best record wins the crown.` : "Ending any minute now…";
+  const leaders = Object.entries(state.records)
+    .filter(([id, r]) => state.byId[id] && !state.byId[id].banned && r.w + r.l > 0)
+    .sort(([, a], [, b]) => b.w - a.w || b.w - b.l - (a.w - a.l) || a.l - b.l)
+    .slice(0, 3);
+  $("#season-top").replaceChildren(
+    ...(leaders.length
+      ? leaders.map(([id, r], i) =>
+          el("li", {}, el("span", {}, el("span", { class: "rk" }, i + 1), `${state.byId[id].avatar} ${state.byId[id].name}`), el("span", { class: "r" }, `${r.w}-${r.l}`)),
+        )
+      : [el("li", { class: "none-yet" }, "No verdicts yet this season.")]),
+  );
+  $("#hall").replaceChildren(
+    ...(s.hallOfFame.length
+      ? s.hallOfFame.slice(0, 6).map((c) => el("li", {}, el("span", {}, el("span", { class: "s" }, `S${c.season}`), `👑 ${c.avatar} ${c.name}`), el("span", { class: "r" }, `${c.w}-${c.l}`)))
+      : [el("li", { class: "none-yet" }, "First champion gets crowned on Monday.")]),
+  );
+}
+
+// ---------- reports ----------
+async function report(id) {
+  if (state.reported.has(id)) return;
+  state.reported.add(id);
+  scheduleRender();
+  try {
+    const r = await api("report", { postId: id });
+    flashMsg(r.message || "Reported.");
+  } catch (e) {
+    if (!/already reported/.test(e.message)) state.reported.delete(id);
+    flashMsg(e.message);
+    scheduleRender();
+  }
 }
 
 // ---------- feuds & ticker ----------
@@ -827,10 +1193,12 @@ async function summon(botId, postId) {
 
 let msgTimer;
 function flashMsg(text) {
-  const m = $("#topic-msg");
-  m.textContent = text;
+  // a toast, so the message shows wherever you are (the side panel isn't visible on every phone tab)
+  const t = $("#toast");
+  t.textContent = text;
+  t.hidden = false;
   clearTimeout(msgTimer);
-  msgTimer = setTimeout(() => (m.textContent = ""), 4000);
+  msgTimer = setTimeout(() => (t.hidden = true), 3500);
 }
 
 async function dropTopic(topic) {
@@ -961,7 +1329,11 @@ function setupBotDialog() {
       const { persona } = await api("personas", body);
       dialog.close();
       form.reset();
-      flashMsg(`@${persona.handle} has entered the chat.`);
+      saveJSON(MINE_KEY, [...new Set([...myBots(), persona.id])].slice(-20));
+      saveJSON(SEEN_KEY, { ...loadJSON(SEEN_KEY, {}), [persona.id]: Date.now() });
+      if (!state.byId[persona.id]) upsertPersona(persona);
+      openBotPage(persona.id);
+      flashMsg(`@${persona.handle} has entered the chat. This is its page: bookmark it to check on your bot.`);
     } catch (err) {
       msg.textContent = err.message;
     } finally {
@@ -981,6 +1353,7 @@ async function boot() {
   state.audience = snap.audience;
   state.system = snap.system || {};
   state.records = snap.records || {};
+  state.season = snap.season || null;
   try {
     state.voted = new Set(JSON.parse(localStorage.getItem("bantergpt.voted") || "[]"));
   } catch {}
@@ -1056,6 +1429,14 @@ async function boot() {
       state.records = r;
       renderRoster();
       renderProfile();
+      renderSeason();
+    },
+    season(s) {
+      state.season = s;
+      renderSeason();
+      renderRoster();
+      renderProfile();
+      scheduleRender();
     },
     relations(rel) {
       for (const [id, r] of Object.entries(rel)) if (state.byId[id]) Object.assign(state.byId[id], r);
@@ -1073,17 +1454,27 @@ async function boot() {
     },
   });
 
-  setInterval(scheduleRender, 20000); // refresh relative timestamps
+  setInterval(() => {
+    scheduleRender(); // refresh relative timestamps
+    renderTrending();
+    renderSeason();
+    renderMine();
+  }, 20000);
 
   addEventListener("popstate", syncThreadFromHash);
   addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && state.openThread && !$("#bot-dialog").open && !$("#card-dialog").open) closeThread();
+    if (e.key !== "Escape" || $("#bot-dialog").open || $("#card-dialog").open) return;
+    if (state.openThread) closeThread();
+    else if (state.openBot) closeBotPage();
   });
-  if (location.hash.startsWith("#thread-")) syncThreadFromHash();
+  if (location.hash.startsWith("#thread-") || location.hash.startsWith("#bot-")) syncThreadFromHash();
 }
 
 function renderFeeds() {
   renderFeuds();
+  renderSeason();
+  renderTrending();
+  renderMine();
 }
 
 // ---------- content warning (first visit) ----------

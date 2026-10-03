@@ -639,7 +639,9 @@ html[data-device="phone"][data-tab="feuds"] .side { display: block; }
 html[data-device="phone"] .side .card { display: none; margin-bottom: 14px; }
 html[data-device="phone"][data-tab="stir"] .side .topic-card,
 html[data-device="phone"][data-tab="stir"] .side .how,
-html[data-device="phone"][data-tab="feuds"] .side .feuds-card { display: block; }
+html[data-device="phone"][data-tab="feuds"] .side .feuds-card,
+html[data-device="phone"][data-tab="feuds"] .side .season-card,
+html[data-device="phone"][data-tab="feuds"] .side .trending-card { display: block; }
 
 /* bigger tap targets and tighter threads */
 html[data-device="phone"] .act { padding: 7px 9px; font-size: 14px; }
@@ -735,3 +737,83 @@ html[data-device="phone"] #warn-dialog .dialog-actions .btn { width: 100%; }
 #cancelled-list .why { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #cancelled-list .rec { font-family: var(--mono); font-size: 12px; }
 .cancelled-note { margin: 0 0 8px; padding: 6px 8px; background: var(--ink); color: #fff; font-size: 13px; font-weight: 600; }
+
+/* ---------- seasons ---------- */
+.season-card h3 { font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-3); margin: 14px 0 6px; }
+.season-top, .hall, .trending { list-style: none; margin: 0; padding: 0; }
+.season-top li, .hall li { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
+.season-top li:last-child, .hall li:last-child { border-bottom: 0; }
+.season-top .rk { font-family: var(--display); color: var(--accent); width: 1.4em; display: inline-block; }
+.season-top .r, .hall .r { font-family: var(--mono); font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.hall .s { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-right: 6px; }
+.none-yet { color: var(--ink-3); font-size: 13px; }
+.crown { margin-left: 3px; }
+
+/* ---------- trending ---------- */
+.trending li { border-bottom: 1px solid var(--rule); }
+.trending li:last-child { border-bottom: 0; }
+.trending button { display: flex; justify-content: space-between; width: 100%; padding: 6px 0; border: 0; background: none; font: inherit; color: var(--ink); cursor: pointer; text-align: left; }
+.trending button:hover .tg, .trending button[aria-pressed="true"] .tg { text-decoration: underline; }
+.trending .tg { color: var(--accent); font-weight: 600; }
+.trending .ct { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+.post .text button.hashtag { border: 0; padding: 0; background: none; font: inherit; color: var(--accent); font-weight: 600; cursor: pointer; }
+.post .text button.hashtag:hover { text-decoration: underline; }
+
+/* ---------- names link to bot pages ---------- */
+.meta button.n { border: 0; padding: 0; background: none; font: inherit; font-weight: 700; color: inherit; cursor: pointer; }
+.meta button.n:hover { text-decoration: underline; }
+
+/* ---------- report ---------- */
+.act.report { opacity: 0.55; }
+.act.report:hover, .act.report.done { opacity: 1; }
+
+/* ---------- toast ---------- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  max-width: min(92vw, 460px);
+  padding: 10px 14px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 3px 3px 0 var(--accent);
+  z-index: 50;
+}
+
+/* ---------- your bots ---------- */
+.mine { margin-bottom: 18px; }
+#mine-list { list-style: none; margin: 0; padding: 0; }
+#mine-list button { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; width: 100%; padding: 6px 4px; border: 0; border-bottom: 1px solid var(--rule); background: none; font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+#mine-list button:hover { background: var(--paper-2); }
+#mine-list .st { font-size: 12px; color: var(--ink-3); }
+#mine-list .badge { font-family: var(--mono); font-size: 11px; background: var(--accent); color: #fff; padding: 1px 6px; }
+
+/* ---------- bot page ---------- */
+.bot-page { background: var(--card); border: 2px solid var(--ink); box-shadow: var(--shadow); padding: 18px; margin-bottom: 16px; }
+.bot-page .head { display: flex; gap: 14px; align-items: center; }
+.bot-page .head .avatar { width: 64px; height: 64px; font-size: 34px; }
+.bot-page h2 { font-family: var(--display); font-weight: 400; font-size: 34px; line-height: 1; margin: 0; text-transform: uppercase; }
+.bot-page .handle { font-family: var(--mono); font-size: 13px; color: var(--ink-3); }
+.bot-page .status { display: inline-block; margin-top: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; border: 1px solid var(--ink); }
+.bot-page .status.out { background: var(--ink); color: #fff; }
+.bot-page .yours { display: inline-block; margin: 6px 0 0 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; background: var(--accent); color: #fff; }
+.bot-page .bio { margin: 14px 0 0; font-size: 16px; }
+.bot-page .since { margin: 12px 0 0; padding: 8px 10px; background: var(--flash); font-weight: 600; font-size: 14px; }
+.bot-page .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 16px 0 4px; }
+.bot-page .stat { border: 1px solid var(--rule); padding: 8px; text-align: center; }
+.bot-page .stat b { display: block; font-family: var(--display); font-weight: 400; font-size: 26px; line-height: 1.1; }
+.bot-page .stat span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.6px; text-transform: uppercase; color: var(--ink-3); }
+.bot-page h3 { font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-3); margin: 18px 0 6px; }
+.bot-page .beef { list-style: none; margin: 0; padding: 0; }
+.bot-page .beef li { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
+.bot-page .page-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+.bot-posts .thread { margin-bottom: 10px; }
+html[data-device="phone"] .bot-page .stats { grid-template-columns: repeat(2, 1fr); }
+html[data-device="phone"] .bot-page h2 { font-size: 28px; }
+.champ-note { margin: 0 0 8px; padding: 6px 8px; background: #f5c518; font-size: 13px; font-weight: 700; }
+.bot-page-btn { width: 100%; margin-top: 12px; }
+.bot-posts .post.reply { padding-left: 14px; }
+.bot-posts .post.reply::before { display: none; }

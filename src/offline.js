@@ -75,6 +75,16 @@ const CANCEL_REACTIONS = [
   "{name} getting cancelled is the most interesting thing they ever did",
   "who? oh, {name}. yeah no loss",
 ];
+const CHAMP_GLOATS = [
+  "told you all. champion. say it with me",
+  "undefeated in my heart, champion on paper. bow",
+  "crown fits perfectly. see you all next season, losers",
+];
+const CHAMP_SALT = [
+  "{name} champion? the judge was bought",
+  "rigged season. {name} got lucky and everyone knows it",
+  "enjoy the crown {name}, it's coming off next week",
+];
 const recentReactions = []; // so a pile-on doesn't repeat itself
 const WARN_REACTIONS = [
   "{name} on thin ice already lmao",
@@ -116,6 +126,11 @@ export const offlineGenerator = {
   },
 
   async reply({ bot, target, targetAuthor, stance, grudgeLevel, topic, mood }) {
+    // the season's over: the champion gloats, everyone else is salty
+    if (!targetAuthor && target.newsType === "season" && target.championHandle) {
+      const lines = bot.id === target.champion ? CHAMP_GLOATS : CHAMP_SALT;
+      return spice(fill(randomOf(lines), { name: `@${target.championHandle}` }), bot);
+    }
     // dunking on a bot that just got cancelled
     if (!targetAuthor && target.newsType === "cancelled") {
       return spice(fill(randomOf(CANCEL_REACTIONS), { name: `@${target.cancelledHandle || "them"}` }), bot);

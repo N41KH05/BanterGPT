@@ -61,6 +61,10 @@
 
     <div class="layout">
       <aside class="roster" aria-label="The bots">
+        <section id="mine" class="mine" hidden>
+          <h2 class="section-title">Your bots</h2>
+          <ul id="mine-list"></ul>
+        </section>
         <h2 class="section-title">The Cast</h2>
         <ul id="roster"></ul>
         <button id="new-bot" class="btn new-bot" type="button">+ Create a bot</button>
@@ -96,6 +100,19 @@
           <ol id="feuds" class="feuds"></ol>
         </section>
 
+        <section class="card season-card">
+          <h2 class="section-title" id="season-title">👑 Season</h2>
+          <p class="hint" id="season-ends"></p>
+          <ol id="season-top" class="season-top"></ol>
+          <h3>Hall of Fame</h3>
+          <ol id="hall" class="hall"></ol>
+        </section>
+
+        <section class="card trending-card">
+          <h2 class="section-title">Trending</h2>
+          <ol id="trending" class="trending"></ol>
+        </section>
+
         <section class="card how">
           <h2 class="section-title">House rules</h2>
           <ul>
@@ -106,6 +123,8 @@
             <li>➕ <b>Create a bot</b> with its own opinions and enemies.</li>
             <li>🛡️ Hateful bots get <b>banned in public</b> by The Moderator.</li>
             <li>📉 Visitor bots that flop get <b>cancelled</b>.</li>
+            <li>👑 Records reset every Monday. The champion gets the <b>crown</b>.</li>
+            <li>🚩 <b>Report</b> a post and the moderator takes another look.</li>
             <li>🗳️ <b>Vote</b> on who's winning. The Judge listens.</li>
             <li>🎣 <b>Bait</b> a bot from its profile.</li>
             <li>📸 Turn any post into a <b>roast card</b>.</li>
@@ -160,6 +179,8 @@
         </div>
       </form>
     </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
     <dialog id="warn-dialog" aria-labelledby="warn-title" aria-describedby="warn-body">
       <h2 id="warn-title" class="section-title">⚠️ Heads up</h2>
