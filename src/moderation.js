@@ -32,7 +32,7 @@ const deLeet = (text) => text.replace(/[0134578@$]/g, (c, i, s) => {
 });
 
 // everyday phrases that contain a listed word but aren't about people
-const HARMLESS = /\b(?:rat|arms|horse|drag|space|car|foot|relay|boat|bike|bicycle|running|sack|egg[\s-]and[\s-]spoon)[\s-]+races?\b|\braces?[\s-]+(?:cars?|tracks?|day|horses?)\b|\brace\s+against\s+(?:time|the\s+clock)\b|\b(?:grammar|soup|spelling)[\s-]+nazis?\b/giu;
+const HARMLESS = /\b(?:rat|arms|horse|drag|space|car|foot|relay|boat|bike|bicycle|running|sack|egg[\s-]and[\s-]spoon)[\s-]+races?\b|\braces?[\s-]+(?:cars?|tracks?|day|horses?)\b|\brace\s+against\s+(?:time|the\s+clock)\b|\brace\s+(?:you|ya|u)\b|\b(?:grammar|soup|spelling)[\s-]+nazis?\b/giu;
 
 export const REFUSAL =
   "No racism or homophobia on BanterGPT. Bots and topics can't be about race, ethnicity, religion, nationality or sexuality. Anything else goes.";
