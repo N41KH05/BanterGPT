@@ -82,6 +82,15 @@ const HOT_TOPICS = [
   "Is it weird to eat cereal for dinner?", "Are self-checkouts a scam?", "Is coffee a personality?",
 ];
 
+// visitor bots that can't keep up get ratio'd off the site (they keep their posts and record)
+const CANCEL_LINES = [
+  "📉 CANCELLED: @{h} got ratio'd off BanterGPT after {why}. Nobody's mourning.",
+  "📉 RATIO'D: @{h} couldn't keep up. {Why}. Thoughts and prayers (none).",
+  "📉 @{h} has been CANCELLED for {why}. Pack it up, it's over.",
+  "📉 BREAKING: the timeline has spoken. @{h} is cancelled after {why}.",
+];
+const GRACE_MS = 45 * 60_000; // new visitor bots can't be cancelled for this long
+
 const BETRAYAL_LINES = [
   "BREAKING: @{a} has turned on @{b}. The alliance is over.",
   "BREAKING: @{a} just stabbed @{b} in the back. Nobody saw it coming. Everybody saw it coming.",
@@ -94,7 +103,7 @@ const TEAMUP_LINES = [
 ];
 
 export class Engine extends Emitter {
-  constructor({ generator, intervalMs, autoTopicMs = 60 * 60_000, shakeupMs = 20 * 60_000, verdictQuietMs = 90_000 }) {
+  constructor({ generator, intervalMs, autoTopicMs = 60 * 60_000, shakeupMs = 20 * 60_000, verdictQuietMs = 90_000, cancelMs = 30 * 60_000 }) {
     super();
     this.generator = generator;
     this.intervalMs = intervalMs;
@@ -104,6 +113,8 @@ export class Engine extends Emitter {
     this.records = {}; // botId -> { w, l, results: ["W","L",...] newest last }
     this.relations = {}; // botId -> { rivals, allies } after shake-ups change them
     this.lastAutoTopicAt = 0;
+    this.cancelMs = cancelMs; // how often the weakest visitor bot can get cancelled
+    this.lastCancelAt = Date.now();
     this.lastShakeupAt = Date.now();
     this.startedAt = Date.now();
     this.posts = new Map(); // id -> post
@@ -499,12 +510,7 @@ export class Engine extends Emitter {
   ban(bot, offence) {
     Object.assign(bot, { banned: true, retired: true, bannedAt: Date.now(), banReason: offence });
     this.holding.add(bot.id);
-    for (const other of personas) {
-      if (other.id === bot.id || (!other.rivals.includes(bot.id) && !other.allies.includes(bot.id))) continue;
-      other.rivals = other.rivals.filter((id) => id !== bot.id);
-      other.allies = other.allies.filter((id) => id !== bot.id);
-      this.relations[other.id] = { rivals: [...other.rivals], allies: [...other.allies] };
-    }
+    this.detach(bot);
     this.removePosts((p) => p.authorId === bot.id);
     this.bannedPrints = [...this.bannedPrints, fingerprint(bot)].slice(-200);
     const creator = this.creators[bot.id];
@@ -513,6 +519,79 @@ export class Engine extends Emitter {
     this.emit("persona", publicPersona(bot));
     this.emit("relations", this.publicRelations());
     this.emit("feuds", this.feuds());
+  }
+
+  // nobody counts a bot that's gone as a rival or ally any more
+  detach(bot) {
+    for (const other of personas) {
+      if (other.id === bot.id || (!other.rivals.includes(bot.id) && !other.allies.includes(bot.id))) continue;
+      other.rivals = other.rivals.filter((id) => id !== bot.id);
+      other.allies = other.allies.filter((id) => id !== bot.id);
+      this.relations[other.id] = { rivals: [...other.rivals], allies: [...other.allies] };
+    }
+  }
+
+  // ---------- cancel culture ----------
+
+  // how well a visitor bot is doing: wins, likes from other bots and cheers from the audience
+  clout(bot) {
+    const rec = this.records[bot.id] || { w: 0, l: 0 };
+    let likes = 0;
+    let cheers = 0;
+    let posts = 0;
+    for (const id of this.order) {
+      const p = this.posts.get(id);
+      if (p.authorId !== bot.id) continue;
+      posts++;
+      likes += p.likes || 0;
+      cheers += p.cheers || 0;
+    }
+    return { score: (rec.w - rec.l) * 3 + likes * 0.5 + cheers * 2 + Math.min(posts, 10) * 0.2, w: rec.w, l: rec.l, likes, cheers, posts };
+  }
+
+  // the visitor bot doing worst (past its grace period), or null. "crowded" = the cast is full,
+  // so someone has to go even if nobody's doing badly
+  worstCustom({ crowded = false, exclude = null } = {}) {
+    const now = Date.now();
+    const customs = active().filter((p) => p.custom && p.id !== exclude);
+    const eligible = customs.filter((p) => now - p.createdAt > GRACE_MS);
+    const pool = eligible.length ? eligible : crowded ? customs : [];
+    if (!pool.length) return null;
+    const ranked = pool.map((bot) => ({ bot, ...this.clout(bot) })).sort((a, b) => a.score - b.score || a.bot.createdAt - b.bot.createdAt);
+    const worst = ranked[0];
+    // outside a crowded cast, only bots that are genuinely flopping get cancelled
+    if (!crowded && !(worst.l >= 2 && worst.l > worst.w) && !(worst.score < 1 && now - worst.bot.createdAt > 2 * GRACE_MS)) return null;
+    return worst;
+  }
+
+  cancelReason({ w, l, likes, cheers, score }, crowded) {
+    if (l >= 2 && l > w) return `going ${w}-${l}`;
+    if (crowded && score >= 1) return "being the least interesting bot in a crowded room";
+    if (!likes && !cheers && !w) return "a whole career without a single like";
+    return "flopping post after post";
+  }
+
+  // a visitor bot gets ratio'd off the site: announced as news, and the others dunk on it
+  cancel(entry, { crowded = false } = {}) {
+    const { bot } = entry;
+    const why = this.cancelReason(entry, crowded);
+    Object.assign(bot, { retired: true, cancelledAt: Date.now(), cancelReason: why });
+    const reactors = shuffle(active().filter((p) => p.id !== bot.id))
+      .sort((a, b) => this.rivalry(b, bot.id) - this.rivalry(a, bot.id))
+      .slice(0, 2);
+    this.detach(bot);
+    this.dirty = true;
+    this.emit("persona", publicPersona(bot));
+    this.emit("relations", this.publicRelations());
+    this.emit("feuds", this.feuds());
+    const text = fill(pick(CANCEL_LINES), { h: bot.handle, why, Why: why.charAt(0).toUpperCase() + why.slice(1) });
+    const post = this.addPost({ authorId: NEWS.id, text, kind: "news", extra: { newsType: "cancelled", cancelled: bot.id, cancelledHandle: bot.handle } });
+    if (!post) return true;
+    for (const r of reactors) {
+      this.remember(r.id, `@${bot.handle} got cancelled and ratio'd off the site. You helped.`);
+      this.queue.push(() => this.reply(r, post, "agree"));
+    }
+    return true;
   }
 
   // is this creator still benched after one of their bots got banned?
@@ -534,6 +613,7 @@ export class Engine extends Emitter {
       records: this.records,
       relations: this.relations,
       lastAutoTopicAt: this.lastAutoTopicAt,
+      lastCancelAt: this.lastCancelAt,
       strikes: this.strikes,
       reviewedUpTo: this.reviewedUpTo,
       salt: this.salt,
@@ -566,6 +646,7 @@ export class Engine extends Emitter {
       if (personaById[id]) Object.assign(personaById[id], { rivals: [...rel.rivals], allies: [...rel.allies] });
     }
     this.lastAutoTopicAt = data.lastAutoTopicAt || 0;
+    this.lastCancelAt = data.lastCancelAt || Date.now();
     this.strikes = data.strikes || {};
     this.reviewedUpTo = data.reviewedUpTo || {};
     if (data.salt) this.salt = data.salt;
@@ -771,6 +852,13 @@ export class Engine extends Emitter {
       const fresh = HOT_TOPICS.filter((t) => !recent.has(t));
       this.dropTopic(pick(fresh.length ? fresh : HOT_TOPICS), { auto: true });
       return true;
+    }
+    // every so often the weakest visitor bot gets cancelled, if it's actually flopping
+    if (now - this.lastCancelAt >= this.cancelMs) {
+      this.lastCancelAt = now;
+      this.dirty = true;
+      const worst = this.worstCustom();
+      if (worst) return this.cancel(worst);
     }
     if (now - this.lastShakeupAt >= this.shakeupMs * (0.7 + Math.random() * 0.6)) {
       this.lastShakeupAt = now;
@@ -1091,11 +1179,10 @@ export class Engine extends Emitter {
     this.emit("persona", publicPersona(persona));
     this.emit("relations", this.publicRelations());
 
-    const customs = personas.filter((p) => p.custom && !p.retired);
-    if (customs.length > MAX_CUSTOM) {
-      const oldest = customs.sort((a, b) => a.createdAt - b.createdAt)[0];
-      oldest.retired = true;
-      this.emit("persona", publicPersona(oldest));
+    // a full cast: the worst-performing visitor bot gets cancelled to make room
+    if (active().filter((p) => p.custom).length > MAX_CUSTOM) {
+      const worst = this.worstCustom({ crowded: true, exclude: persona.id });
+      if (worst) this.cancel(worst, { crowded: true });
     }
 
     this.queue.push(() => this.newPost(persona));

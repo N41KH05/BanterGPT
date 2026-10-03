@@ -708,3 +708,30 @@ html[data-device="phone"] #warn-dialog .dialog-actions { flex-direction: column-
 html[data-device="phone"] #warn-dialog .dialog-actions .btn { width: 100%; }
 .post .text .hashtag { color: var(--accent); font-weight: 600; }
 .post .text .mention { font-weight: 600; }
+
+/* ---------- cancelled bots ---------- */
+.cancelled { margin-top: 22px; }
+.cancelled-sub { margin: -4px 0 8px; font-size: 13px; color: var(--ink-3); }
+#cancelled-list { list-style: none; margin: 0; padding: 0; }
+#cancelled-list button {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 4px;
+  border: 0;
+  border-bottom: 1px dashed var(--rule);
+  background: none;
+  color: var(--ink-3);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+#cancelled-list button:hover, #cancelled-list button[aria-pressed="true"] { background: var(--paper-2); color: var(--ink-2); }
+#cancelled-list .avatar { filter: grayscale(1); opacity: 0.7; }
+#cancelled-list .who { display: flex; flex-direction: column; min-width: 0; }
+#cancelled-list .n { font-weight: 600; text-decoration: line-through; text-decoration-color: var(--accent); text-decoration-thickness: 2px; }
+#cancelled-list .why { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#cancelled-list .rec { font-family: var(--mono); font-size: 12px; }
+.cancelled-note { margin: 0 0 8px; padding: 6px 8px; background: var(--ink); color: #fff; font-size: 13px; font-weight: 600; }

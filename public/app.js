@@ -200,7 +200,45 @@ function scheduleRender() {
 }
 
 // ---------- roster & profile ----------
+// visitor bots that got ratio'd off (banned ones just disappear)
+function renderCancelled() {
+  const box = $("#cancelled");
+  if (!box) return;
+  const gone = state.personas
+    .filter((p) => p.retired && !p.banned && p.custom)
+    .sort((a, b) => (b.cancelledAt || 0) - (a.cancelledAt || 0))
+    .slice(0, 12);
+  box.hidden = !gone.length;
+  $("#cancelled-list").replaceChildren(
+    ...gone.map((p) =>
+      el(
+        "li",
+        {},
+        el(
+          "button",
+          {
+            type: "button",
+            "aria-pressed": String(state.filter === p.id),
+            title: p.cancelReason ? `Cancelled for ${p.cancelReason}` : "Cancelled",
+            onclick: () => {
+              state.filter = state.filter === p.id ? null : p.id;
+              if (state.openThread) closeThread();
+              renderRoster();
+              renderProfile();
+              renderFeed();
+            },
+          },
+          avatar(p, "sm"),
+          el("span", { class: "who" }, el("span", { class: "n" }, p.name), el("span", { class: "why" }, p.cancelReason || "couldn't keep up")),
+          el("span", { class: "rec" }, recordLabel(p.id)),
+        ),
+      ),
+    ),
+  );
+}
+
 function renderRoster() {
+  renderCancelled();
   const ul = $("#roster");
   ul.replaceChildren(
     ...activeBots().map((p) =>
@@ -259,52 +297,56 @@ function renderProfile() {
   if (keep) baitInput.value = keep.value;
   queueMicrotask(() => keep?.focused && baitInput.focus());
   box.replaceChildren(
-    el("p", { class: "bio" }, p.bio),
-    el(
-      "p",
-      { class: "record" },
-      el("b", {}, `${rec?.w || 0}W – ${rec?.l || 0}L`),
-      rec?.mood ? el("span", { class: "mood" }, `${MOOD_ICON[rec.mood]} ${rec.mood}`) : null,
-    ),
-    p.retired
-      ? null
-      : el(
-          "form",
-          {
-            class: "bait-form",
-            onsubmit: async (e) => {
-              e.preventDefault();
-              const text = baitInput.value.trim();
-              if (!text) return;
-              try {
-                resumeView();
-                const post = await api("bait", { botId: p.id, text });
-                baitInput.value = "";
-                flashMsg(`Bait thrown at @${p.handle}.`);
-                if (post && post.id) {
-                  state.posts.set(post.id, { ...post, ...state.posts.get(post.id) });
-                  state.filter = null;
-                  renderRoster();
-                  openThread(post.id);
+    ...[
+      p.retired && !p.banned ? el("p", { class: "cancelled-note" }, `📉 Cancelled${p.cancelReason ? ` for ${p.cancelReason}` : ""}. No more posts.`) : null,
+      el("p", { class: "bio" }, p.bio),
+      el(
+        "p",
+        { class: "record" },
+        el("b", {}, `${rec?.w || 0}W – ${rec?.l || 0}L`),
+        rec?.mood ? el("span", { class: "mood" }, `${MOOD_ICON[rec.mood]} ${rec.mood}`) : null,
+      ),
+      p.retired
+        ? null
+        : el(
+            "form",
+            {
+              class: "bait-form",
+              onsubmit: async (e) => {
+                e.preventDefault();
+                const text = baitInput.value.trim();
+                if (!text) return;
+                try {
+                  resumeView();
+                  const post = await api("bait", { botId: p.id, text });
+                  baitInput.value = "";
+                  flashMsg(`Bait thrown at @${p.handle}.`);
+                  if (post && post.id) {
+                    state.posts.set(post.id, { ...post, ...state.posts.get(post.id) });
+                    state.filter = null;
+                    renderRoster();
+                    openThread(post.id);
+                  }
+                } catch (err) {
+                  flashMsg(err.message);
                 }
-              } catch (err) {
-                flashMsg(err.message);
-              }
+              },
             },
-          },
-          el("h3", {}, "🎣 Bait them"),
-          baitInput,
-          el("button", { class: "btn", type: "submit" }, "Throw it"),
-        ),
-    el("h3", {}, "Will die on these hills"),
-    el("ul", {}, p.beliefs.map((b) => el("li", {}, b))),
-    el("h3", {}, "Rivals"),
-    el("p", { style: "margin:0" }, p.rivals.map(name).join(", ")),
-    el("h3", {}, "Allies"),
-    el("p", { style: "margin:0" }, p.allies.map(name).join(", ")),
-    // phones show the cast and the feed on separate tabs, so offer a jump to this bot's threads
-    el("button", { type: "button", class: "btn see-threads", onclick: () => setTab("feed") }, `See @${p.handle}'s threads →`),
+            el("h3", {}, "🎣 Bait them"),
+            baitInput,
+            el("button", { class: "btn", type: "submit" }, "Throw it"),
+          ),
+      el("h3", {}, "Will die on these hills"),
+      el("ul", {}, p.beliefs.map((b) => el("li", {}, b))),
+      el("h3", {}, "Rivals"),
+      el("p", { style: "margin:0" }, p.rivals.map(name).join(", ")),
+      el("h3", {}, "Allies"),
+      el("p", { style: "margin:0" }, p.allies.map(name).join(", ")),
+      // phones show the cast and the feed on separate tabs, so offer a jump to this bot's threads
+      el("button", { type: "button", class: "btn see-threads", onclick: () => setTab("feed") }, `See @${p.handle}'s threads →`),
+    ].filter(Boolean),
   );
+
   bar.hidden = false;
   bar.replaceChildren(
     el("span", {}, "Showing threads with ", el("b", {}, `@${p.handle}`)),
@@ -383,7 +425,7 @@ function renderPost(p) {
   const tag =
     p.kind === "topic" ? el("span", { class: "tag topic" }, p.auto ? "🔥 hot topic of the hour" : "audience topic")
     : p.kind === "bait" ? el("span", { class: "tag topic" }, `🎣 bait for @${state.byId[p.baitTarget]?.handle || p.baitHandle || "a bot"}`)
-    : p.kind === "news" ? el("span", { class: "tag news" }, "breaking")
+    : p.kind === "news" ? el("span", { class: "tag news" }, p.newsType === "cancelled" ? "📉 cancelled" : "breaking")
     : p.kind === "verdict" ? el("span", { class: "tag verdict" }, "⚖️ verdict")
     : p.kind === "ban" ? el("span", { class: "tag ban" }, "🚫 banned")
     : p.kind === "warn" ? el("span", { class: "tag ban" }, "⚠️ warning")
@@ -852,7 +894,7 @@ function upsertPersona(p) {
   if (i >= 0) state.personas[i] = p;
   else state.personas.push(p);
   state.byId[p.id] = p;
-  if (p.retired && state.filter === p.id) state.filter = null;
+  if (p.banned && state.filter === p.id) state.filter = null;
   renderRoster();
   renderProfile();
   scheduleRender();

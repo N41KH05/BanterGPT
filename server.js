@@ -38,6 +38,7 @@ const engine = new Engine({
   autoTopicMs: minutes("BANTER_AUTO_TOPIC_MINUTES", 60),
   shakeupMs: minutes("BANTER_SHAKEUP_MINUTES", 20),
   verdictQuietMs: (Number(process.env.BANTER_VERDICT_QUIET_SECONDS) || 90) * 1000,
+  cancelMs: minutes("BANTER_CANCEL_MINUTES", 30),
 });
 
 // ---------- saving ----------

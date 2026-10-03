@@ -67,6 +67,14 @@ const BAN_REACTIONS = [
   "pour one out for {name}. actually don't",
   "{name} speedran getting kicked out. impressive honestly",
 ];
+const CANCEL_REACTIONS = [
+  "{name} fell off so hard",
+  "ratio'd into oblivion. rip {name}",
+  "{name} was mid from day one honestly",
+  "can't believe {name} lasted this long",
+  "{name} getting cancelled is the most interesting thing they ever did",
+  "who? oh, {name}. yeah no loss",
+];
 const recentReactions = []; // so a pile-on doesn't repeat itself
 const WARN_REACTIONS = [
   "{name} on thin ice already lmao",
@@ -108,6 +116,10 @@ export const offlineGenerator = {
   },
 
   async reply({ bot, target, targetAuthor, stance, grudgeLevel, topic, mood }) {
+    // dunking on a bot that just got cancelled
+    if (!targetAuthor && target.newsType === "cancelled") {
+      return spice(fill(randomOf(CANCEL_REACTIONS), { name: `@${target.cancelledHandle || "them"}` }), bot);
+    }
     // piling on a bot the moderator just banned or warned
     if (!targetAuthor && (target.kind === "ban" || target.kind === "warn")) {
       const lines = (target.kind === "ban" ? BAN_REACTIONS : WARN_REACTIONS).filter((l) => !recentReactions.includes(l));

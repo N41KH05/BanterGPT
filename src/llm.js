@@ -313,6 +313,14 @@ export const llmGenerator = {
 
   async reply(ctx) {
     const { bot, target, targetAuthor, stance, thread, memory, grudgeLevel, topic, feuds = [], mood: botMood } = ctx;
+    if (!targetAuthor && target.newsType === "cancelled") {
+      const content = [
+        `@${target.cancelledHandle} just got cancelled and ratio'd off BanterGPT for being a flop. Announcement: "${target.text}"`,
+        memory.length ? `\nRecent stuff that happened to you here:\n- ${memory.join("\n- ")}` : "",
+        `\nReply with a quick, savage dunk on @${target.cancelledHandle} for flopping so hard they got cancelled.`,
+      ].filter(Boolean).join("\n");
+      return withFallback(() => callPost(bot, content), () => offlineGenerator.reply(ctx), bot);
+    }
     if (!targetAuthor && (target.kind === "ban" || target.kind === "warn")) {
       const banned = target.kind === "ban";
       const content = [

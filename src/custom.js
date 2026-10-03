@@ -4,7 +4,7 @@
 import { censor } from "./censor.js";
 import { screenText, REFUSAL } from "./moderation.js";
 
-export const MAX_CUSTOM = 12; // oldest custom bot is retired when a new one would exceed this
+export const MAX_CUSTOM = 12; // past this, the worst-performing visitor bot gets cancelled
 
 const LIMITS = { name: 24, handle: 20, bio: 100, voice: 220, belief: 100 };
 const COLORS = ["#c2410c", "#0f766e", "#7c3aed", "#be185d", "#15803d", "#1d4ed8", "#a16207", "#475569"];
