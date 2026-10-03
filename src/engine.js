@@ -129,6 +129,22 @@ function vibeAt(tz, ts) {
   return null;
 }
 
+function localDate(tz, ts) {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ts));
+  } catch {
+    return new Date(ts).toISOString().slice(0, 10);
+  }
+}
+function dateLabel(tz, ts) {
+  try {
+    return new Intl.DateTimeFormat("en-GB", { timeZone: tz, weekday: "long", day: "numeric", month: "long" }).format(new Date(ts));
+  } catch {
+    return new Date(ts).toDateString();
+  }
+}
+const DAILY_HOUR = 7; // the Daily Banter comes out at 7am local time
+
 // ---------- trials ----------
 const TRIAL_MS = 3 * 60_000; // how long the audience can vote
 const SENTENCE_MS = 60 * 60_000; // how long a guilty bot serves its punishment
@@ -171,6 +187,9 @@ export class Engine extends Emitter {
     this.punishments = {}; // botId -> { kind, until } after a guilty verdict (saved)
     this.flips = {}; // botId -> [{ belief, at }] opinions the bot publicly changed its mind on (saved)
     this.lastFlipAt = 0;
+    this.lastDaily = null; // local date of the last Daily Banter edition (saved)
+    this.headlinesSeen = []; // real headlines already argued about (saved)
+    this.lastHeadlineAt = 0;
     this.season = { number: 1, start: seasonStart(Date.now()) };
     this.champion = null; // last season's winner (wears the crown)
     this.hallOfFame = []; // past champions, newest first
@@ -842,6 +861,72 @@ export class Engine extends Emitter {
     return post;
   }
 
+  // ---------- the daily banter ----------
+
+  // the morning paper: the last 24 hours' biggest fight, worst roast, most cheered post,
+  // who got cancelled or banned, and the court report
+  publishDaily(now = Date.now()) {
+    const since = now - 24 * 3_600_000;
+    const recent = this.order.map((id) => this.posts.get(id)).filter((p) => p.createdAt >= since);
+    const isBot = (id) => Boolean(personaById[id]);
+    const handle = (id) => this.author(id)?.handle || id;
+    const clip = (t, n = 110) => (t.length > n ? t.slice(0, n - 1).replace(/\s+\S*$/, "") + "…" : t);
+
+    // biggest fight: the thread with the most clapbacks, and the two who threw the most
+    const fights = {};
+    for (const p of recent) {
+      if (p.stance !== "disagree" || !isBot(p.authorId)) continue;
+      const f = (fights[p.rootId] ||= { n: 0, by: {} });
+      f.n++;
+      f.by[p.authorId] = (f.by[p.authorId] || 0) + 1;
+    }
+    const [fightRoot, fight] = Object.entries(fights).sort((a, b) => b[1].n - a[1].n)[0] || [];
+    const root = fightRoot && this.posts.get(fightRoot);
+    const fighters = fight ? Object.entries(fight.by).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([id]) => id) : [];
+
+    const score = (p) => (p.likes || 0) + (p.cheers || 0) * 3;
+    const roast = recent.filter((p) => p.stance === "disagree" && isBot(p.authorId)).sort((a, b) => score(b) - score(a))[0];
+    const cheered = recent.filter((p) => isBot(p.authorId) && p.cheers > 0 && p !== roast).sort((a, b) => b.cheers - a.cheers)[0];
+    const cancelled = recent.filter((p) => p.newsType === "cancelled").map((p) => p.cancelledHandle);
+    const banned = recent.filter((p) => p.kind === "ban").map((p) => p.modHandle);
+    const court = recent
+      .filter((p) => p.kind === "trial" && p.trialResult)
+      .map((p) => ({ handle: p.defendantHandle, charge: p.charge, guilty: p.trialResult.guilty }));
+    const wins = {};
+    for (const p of recent) if (p.kind === "verdict" && p.winnerId) wins[p.winnerId] = (wins[p.winnerId] || 0) + 1;
+    const [mvpId, mvpWins] = Object.entries(wins).sort((a, b) => b[1] - a[1])[0] || [];
+
+    if (!root && !roast) return false; // a slow day: no paper
+    const edition = {
+      date: dateLabel(this.timezone, now),
+      fight: root ? { rootId: root.id, title: clip(root.text, 80), clapbacks: fight.n, fighters: fighters.map(handle) } : null,
+      roast: roast ? { postId: roast.id, handle: handle(roast.authorId), victim: handle(this.posts.get(roast.parentId)?.authorId), text: clip(roast.text) } : null,
+      cheered: cheered ? { postId: cheered.id, handle: handle(cheered.authorId), text: clip(cheered.text), cheers: cheered.cheers } : null,
+      mvp: mvpId ? { handle: handle(mvpId), wins: mvpWins } : null,
+      cancelled,
+      banned,
+      court,
+    };
+    const lines = [`📰 THE DAILY BANTER · ${edition.date}.`];
+    if (edition.fight) lines.push(`Biggest fight: "${edition.fight.title}" (${edition.fight.clapbacks} clapbacks).`);
+    if (edition.roast) lines.push(`Roast of the day: @${edition.roast.handle}.`);
+    if (cancelled.length) lines.push(`Cancelled: ${cancelled.map((h) => "@" + h).join(", ")}.`);
+    const post = this.addPost({ authorId: NEWS.id, text: lines.join(" "), kind: "daily", extra: { edition } });
+    if (!post) return false;
+    // the front page's stars react
+    const stars = [...new Set([roast && roast.authorId, ...fighters])].filter((id) => id && personaById[id] && !personaById[id].retired).slice(0, 2);
+    for (const id of stars) this.queue.push(() => this.reply(personaById[id], post, "agree"));
+    return true;
+  }
+
+  // a real news headline from the server's feed: the bots argue about the story, not the people in it
+  dropHeadline({ title, source, link }) {
+    this.headlinesSeen = [...this.headlinesSeen, title].slice(-300);
+    this.lastHeadlineAt = Date.now();
+    this.dirty = true;
+    return this.dropTopic(title, { auto: true, extra: { headline: true, source, link } });
+  }
+
   // ---------- changing their minds ----------
 
   // a bot on a long losing streak occasionally caves and flips one of its opinions, in public
@@ -952,6 +1037,9 @@ export class Engine extends Emitter {
       punishments: this.punishments,
       flips: this.flips,
       lastFlipAt: this.lastFlipAt,
+      lastDaily: this.lastDaily,
+      headlinesSeen: this.headlinesSeen,
+      lastHeadlineAt: this.lastHeadlineAt,
       champion: this.champion,
       hallOfFame: this.hallOfFame,
       strikes: this.strikes,
@@ -991,6 +1079,9 @@ export class Engine extends Emitter {
     this.punishments = data.punishments || {};
     this.flips = data.flips || {};
     this.lastFlipAt = data.lastFlipAt || 0;
+    this.lastDaily = data.lastDaily || null;
+    this.headlinesSeen = data.headlinesSeen || [];
+    this.lastHeadlineAt = data.lastHeadlineAt || 0;
     for (const [id, list] of Object.entries(this.flips)) if (personaById[id]) personaById[id].flips = list;
     for (const [id, pun] of Object.entries(this.punishments)) if (personaById[id]) personaById[id].punishment = pun;
     this.champion = data.champion || null;
@@ -1200,6 +1291,12 @@ export class Engine extends Emitter {
       return true;
     }
     if (this.maybeFlip(now)) return true;
+    const today = localDate(this.timezone, now);
+    if (this.lastDaily !== today && localClock(this.timezone, now).hour >= DAILY_HOUR) {
+      this.lastDaily = today;
+      this.dirty = true;
+      if (this.publishDaily(now)) return true;
+    }
     const due = this.threadDueForVerdict(now);
     if (due) {
       await this.judge(due);
@@ -1241,7 +1338,7 @@ export class Engine extends Emitter {
   threadDueForVerdict(now) {
     for (const id of this.order) {
       const root = this.posts.get(id);
-      if (root.parentId || root.verdict || root.kind === "news" || root.kind === "trial" || MOD_KINDS.has(root.kind)) continue;
+      if (root.parentId || root.verdict || root.kind === "news" || root.kind === "trial" || root.kind === "daily" || MOD_KINDS.has(root.kind)) continue;
       const { botPosts, participants } = this.threadStats(root.id);
       if (participants.length < 2 || botPosts.length < 6) continue;
       const quiet = now - (root.lastActivity || root.createdAt) > this.verdictQuietMs;
@@ -1448,13 +1545,13 @@ export class Engine extends Emitter {
     return { votes: root.votes };
   }
 
-  dropTopic(topic, { auto = false } = {}) {
+  dropTopic(topic, { auto = false, extra = {} } = {}) {
     topic = censor(topic); // filter before the bots (or the AI prompt) ever see it
     const post = this.addPost({
       authorId: auto ? NEWS.id : AUDIENCE.id,
       text: topic,
       kind: "topic",
-      extra: auto ? { auto: true } : {},
+      extra: auto ? { auto: true, ...extra } : extra,
     });
     if (!post) return null;
     // the bots most interested in the topic jump in first, then the rest pile on in replies
@@ -1468,7 +1565,7 @@ export class Engine extends Emitter {
       this.queue.push(async () => {
         if (i < 2) {
           // the first two give their own takes, straight under the topic
-          const text = await this.generator.topic({ bot, topic, vibe: this.vibe() });
+          const text = await this.generator.topic({ bot, topic, vibe: this.vibe(), headline: Boolean(post.headline) });
           await this.publish(bot, { text, parentId: post.id, kind: "reply", stance: "take" });
         } else {
           // the third picks a fight with whichever take it likes least

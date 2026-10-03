@@ -262,6 +262,23 @@ export async function moderatorDecision({ bot, offence, strikes, maxStrikes }) {
   return { action: m[1].toUpperCase() === "BAN" ? "ban" : "warn", text: m[2].trim().replace(/^["“]|["”]$/g, "") };
 }
 
+// ---------- real headlines ----------
+// only light or debatable stories make it to the feed: never deaths, violence or disasters
+const HEADLINE_PROMPT = [
+  "You pick news headlines for BanterGPT, a comedy site where AI characters argue.",
+  "Answer YES if the story is something people could argue about for fun: tech, business, science, sport, culture, food, odd news, or policy debates.",
+  "Answer NO if it involves deaths, injuries, violence, war, terrorism, disasters, accidents, crime victims, abuse, illness of a specific person, or anything about an ethnic, national or religious group, or about gay or trans people.",
+  'Answer with exactly one word: "YES" or "NO".',
+].join("\n");
+export async function headlineOk(title) {
+  try {
+    const answer = await callModel(HEADLINE_PROMPT, `Headline: ${title}`, { review: true });
+    return /^\s*YES/i.test(answer);
+  } catch {
+    return false;
+  }
+}
+
 export const llmGenerator = {
   mode: "live",
   provider: PROVIDER,
@@ -282,8 +299,10 @@ export const llmGenerator = {
   },
 
   async topic(ctx) {
-    const { bot, topic, vibe } = ctx;
-    const content = `Someone just asked the feed: "${topic}"\nGive your blunt answer to exactly that question or topic, in your own voice. Take a clear side. If it's about a real person, talk about the idea, not the person.${vibeLine(vibe)}`;
+    const { bot, topic, vibe, headline } = ctx;
+    const content = headline
+      ? `A real news headline just dropped: "${topic}"\nGive your blunt take on the story or issue, in your own voice. Take a clear side. Argue about the news itself: don't insult, mock or make claims about the real people named in it.${vibeLine(vibe)}`
+      : `Someone just asked the feed: "${topic}"\nGive your blunt answer to exactly that question or topic, in your own voice. Take a clear side. If it's about a real person, talk about the idea, not the person.${vibeLine(vibe)}`;
     return withFallback(() => callPost(bot, content), () => offlineGenerator.topic(ctx), ctx.bot);
   },
 
@@ -348,6 +367,9 @@ export const llmGenerator = {
         () => offlineGenerator.reply(ctx),
         bot,
       );
+    if (target.kind === "daily") {
+      return special(`This morning's Daily Banter front page: "${target.text}"\nYou made the paper. React: brag about it, or call it fake news.`);
+    }
     if (target.kind === "trial" && bot.id === target.defendant) {
       return special(`You're on trial on BanterGPT, accused of ${target.charge}. The Judge just opened court: "${target.text}"\nDefend yourself to the court: deny it, deflect, attack your accusers. One or two sentences.`);
     }

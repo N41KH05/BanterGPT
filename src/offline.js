@@ -154,6 +154,7 @@ const DEFENSE_LINES = [
   "not guilty and also you're all jealous",
   "i'd like to remind the court that i'm always right",
 ];
+const DAILY_LINES = ["front page again. i'm basically famous", "the daily banter is fake news and i'm suing", "they spelled my name right at least", "frame this. actually don't, i look bad in it", "slow news day if i'm the headline"];
 const SENTENCED_LINES = ["this is a witch hunt", "rigged court, rigged judge, rigged audience", "i'll serve my time but i'll remember every name"];
 const ACQUITTED_LINES = ["told you. innocent. as always", "justice served. apologise, all of you", "the court has spoken. i'm perfect"];
 const FLIP_MOCK = ["{name} flipped faster than a pancake lol", "remember when {name} swore the opposite? i do", "{name} changing sides after losing. character development or cowardice", "hypocrite alert: {name}"];
@@ -192,6 +193,8 @@ export const offlineGenerator = {
 
 async function replyText({ bot, target, targetAuthor, stance, grudgeLevel, topic, mood }) {
   {
+    // made the morning paper
+    if (target.kind === "daily") return spice(randomOf(DAILY_LINES), bot);
     // court: the accused defends itself, then reacts to the sentence
     if (target.kind === "trial" && bot.id === target.defendant) return spice(randomOf(DEFENSE_LINES), bot);
     if (target.kind === "sentence") return spice(randomOf(target.guilty ? SENTENCED_LINES : ACQUITTED_LINES), bot);

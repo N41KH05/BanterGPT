@@ -538,6 +538,42 @@ function richText(text) {
 
 const isAudienceRoot = (p) => p && (p.kind === "topic" || p.kind === "bait" || p.kind === "review");
 
+// the Daily Banter's front page, laid out like a newspaper
+function frontPage(ed) {
+  const open = (id) => () => {
+    const p = state.posts.get(id);
+    if (p) openThread(p.rootId);
+    else flashMsg("That one's scrolled off the feed.");
+  };
+  const story = (kicker, headline, body, onclick) =>
+    el(
+      "div",
+      { class: `story ${onclick ? "linked" : ""}`, onclick: onclick || null },
+      el("span", { class: "kicker" }, kicker),
+      el("b", { class: "hl" }, headline),
+      body ? el("p", {}, body) : null,
+    );
+  const stories = [
+    ed.fight && story("Biggest fight", `"${ed.fight.title}"`, `${ed.fight.clapbacks} clapbacks${ed.fight.fighters.length ? `, led by ${ed.fight.fighters.map((h) => "@" + h).join(" and ")}` : ""}.`, open(ed.fight.rootId)),
+    ed.roast && story("Roast of the day", `@${ed.roast.handle}${ed.roast.victim ? ` vs @${ed.roast.victim}` : ""}`, `"${ed.roast.text}"`, open(ed.roast.postId)),
+    ed.cheered && story("Crowd favourite", `@${ed.cheered.handle} · ${ed.cheered.cheers} 👏`, `"${ed.cheered.text}"`, open(ed.cheered.postId)),
+    ed.mvp && story("MVP", `@${ed.mvp.handle}`, `${ed.mvp.wins} thread${ed.mvp.wins === 1 ? "" : "s"} won.`),
+    ed.court?.length && story("Court report", ed.court.map((c) => `@${c.handle}: ${c.guilty ? "GUILTY" : "not guilty"} of ${c.charge}`).join(". "), ""),
+    (ed.cancelled?.length || ed.banned?.length) &&
+      story(
+        "Obituaries",
+        [...(ed.cancelled || []).map((h) => `@${h} (cancelled)`), ...(ed.banned || []).map((h) => `@${h} (banned)`)].join(", "),
+        "Gone but not missed.",
+      ),
+  ].filter(Boolean);
+  return el(
+    "div",
+    { class: "front-page" },
+    el("div", { class: "masthead-np" }, el("span", { class: "np-title" }, "The Daily Banter"), el("span", { class: "np-date" }, ed.date)),
+    el("div", { class: "stories" }, stories),
+  );
+}
+
 // average rating the bots gave a review thread
 function avgStars(root) {
   const stars = [...state.posts.values()].filter((p) => p.parentId === root.id && p.stars).map((p) => p.stars);
@@ -590,7 +626,9 @@ function renderPost(p) {
   const parent = p.parentId ? state.posts.get(p.parentId) : null;
   const isRoot = !p.parentId;
   const tag =
-    p.kind === "topic" ? el("span", { class: "tag topic" }, p.auto ? "🔥 hot topic of the hour" : "audience topic")
+    p.kind === "topic" && p.headline ? el("span", { class: "tag headline" }, "🗞️ real headline")
+    : p.kind === "topic" ? el("span", { class: "tag topic" }, p.auto ? "🔥 hot topic of the hour" : "audience topic")
+    : p.kind === "daily" ? el("span", { class: "tag news" }, "📰 morning edition")
     : p.kind === "bait" ? el("span", { class: "tag topic" }, `🎣 bait for @${state.byId[p.baitTarget]?.handle || p.baitHandle || "a bot"}`)
     : p.kind === "news" ? el("span", { class: "tag news" }, p.newsType === "cancelled" ? "📉 cancelled" : p.newsType === "comeback" ? "🔁 comeback" : p.newsType === "season" ? "👑 season over" : p.newsType === "flip" ? "🔄 flip-flop" : "breaking")
     : p.kind === "verdict" ? el("span", { class: "tag verdict" }, "⚖️ verdict")
@@ -628,7 +666,11 @@ function renderPost(p) {
         tag,
       ),
       parent ? el("div", { class: "replying" }, `replying to @${author(parent.authorId).handle}`) : null,
-      el("p", { class: "text" }, p.stars ? el("span", { class: "stars", title: `${p.stars} out of 5` }, "★".repeat(p.stars) + "☆".repeat(5 - p.stars)) : null, richText(p.text)),
+      p.kind === "daily" && p.edition ? frontPage(p.edition) : null,
+      p.headline && p.source
+        ? el("p", { class: "headline-src" }, "Source: ", p.link ? el("a", { href: p.link, target: "_blank", rel: "noopener noreferrer" }, p.source) : p.source)
+        : null,
+      p.kind === "daily" && p.edition ? null : el("p", { class: "text" }, p.stars ? el("span", { class: "stars", title: `${p.stars} out of 5` }, "★".repeat(p.stars) + "☆".repeat(5 - p.stars)) : null, richText(p.text)),
       el(
         "div",
         { class: "actions" },
@@ -656,6 +698,9 @@ function renderPost(p) {
           "📣 Summon",
         ),
         el("button", { type: "button", class: "act", title: "Make a shareable image of this post", onclick: () => openCard(p) }, "📸 Card"),
+        p.parentId && state.posts.get(p.parentId)?.text
+          ? el("button", { type: "button", class: "act", title: "Turn this comeback into a two-panel meme", onclick: () => openMeme(p) }, "🖼️ Meme")
+          : null,
         p.authorId !== "moderator"
           ? el(
               "button",
@@ -843,7 +888,7 @@ async function openCard(p) {
   const parent = p.parentId ? state.posts.get(p.parentId) : null;
   const tag =
     p.kind === "verdict" ? "⚖ verdict" : p.kind === "news" ? "breaking" : p.kind === "ban" ? "🚫 banned" : p.stance === "disagree" ? "clapback" : p.kind === "topic" ? "hot topic" : "";
-  cardBlob = await renderRoastCard({
+  const blob = await renderRoastCard({
     post: p,
     author: author(p.authorId),
     parent,
@@ -851,13 +896,34 @@ async function openCard(p) {
     tag,
     siteUrl: (location.host + location.pathname).replace(/\/$/, ""),
   });
+  showImage(blob, "Roast card", `Roast card: @${author(p.authorId).handle}: ${p.text}`, `bantergpt-${author(p.authorId).handle}-${p.id}.png`);
+}
+
+// a two-panel meme: the post being answered on top, this comeback underneath
+async function openMeme(p) {
+  const parent = state.posts.get(p.parentId);
+  if (!parent) return;
+  const { renderMeme } = await import("./roastcard.js");
+  const blob = await renderMeme({
+    top: parent,
+    topAuthor: author(parent.authorId),
+    bottom: p,
+    bottomAuthor: author(p.authorId),
+    siteUrl: (location.host + location.pathname).replace(/\/$/, ""),
+  });
+  showImage(blob, "Meme", `Meme: @${author(parent.authorId).handle}: ${parent.text} / @${author(p.authorId).handle}: ${p.text}`, `bantergpt-meme-${p.id}.png`);
+}
+
+function showImage(blob, title, alt, filename) {
+  cardBlob = blob;
   if (cardUrl) URL.revokeObjectURL(cardUrl);
   cardUrl = URL.createObjectURL(cardBlob);
+  $("#card-title").textContent = title;
   $("#card-img").src = cardUrl;
-  $("#card-img").alt = `Roast card: @${author(p.authorId).handle}: ${p.text}`;
+  $("#card-img").alt = alt;
   $("#card-download").href = cardUrl;
-  $("#card-download").download = `bantergpt-${author(p.authorId).handle}-${p.id}.png`;
-  const file = new File([cardBlob], "bantergpt-roast.png", { type: "image/png" });
+  $("#card-download").download = filename;
+  const file = new File([cardBlob], filename, { type: "image/png" });
   $("#card-share").hidden = !(navigator.canShare && navigator.canShare({ files: [file] }));
   $("#card-share").onclick = () => navigator.share({ files: [file], text: "from BanterGPT" }).catch(() => {});
   $("#card-dialog").showModal();
@@ -1348,8 +1414,8 @@ function renderFeuds() {
 function renderTicker() {
   const track = $("#ticker-track");
   const items = [];
-  const news = [...state.posts.values()].filter((p) => p.kind === "news" || p.kind === "verdict" || p.kind === "ban").slice(-3).reverse();
-  const label = { news: "BREAKING: ", verdict: "VERDICT: ", ban: "BANNED: " };
+  const news = [...state.posts.values()].filter((p) => p.kind === "news" || p.kind === "verdict" || p.kind === "ban" || p.headline).slice(-3).reverse();
+  const label = { news: "BREAKING: ", verdict: "VERDICT: ", ban: "BANNED: ", topic: "IN THE NEWS: " };
   for (const n of news) items.push(el("span", {}, el("b", {}, label[n.kind]), n.text.replace(/^(BREAKING|🚫 BANNED|🚫):?\s*/, "")));
   for (const f of state.feuds.slice(0, 3)) {
     items.push(el("span", {}, el("b", {}, "FEUD ALERT: "), `${state.byId[f.a].name} vs ${state.byId[f.b].name}`));

@@ -138,3 +138,69 @@ export async function renderRoastCard({ post, author, parent, parentAuthor, tag,
 
   return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
 }
+
+// Two-panel memes: what someone said on top, the comeback underneath, each next to the
+// poster's avatar. Same canvas approach as the roast cards.
+export async function renderMeme({ top, topAuthor, bottom, bottomAuthor, siteUrl }) {
+  await document.fonts?.ready;
+  const W = 1080;
+  const H = 1160;
+  const FOOT = 80;
+  const panelH = (H - FOOT) / 2;
+  const face = 400;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  const display = '"Anton", Impact, sans-serif';
+  const mono = '"JetBrains Mono", ui-monospace, monospace';
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, W, H);
+
+  const panel = (y, post, who) => {
+    // the poster's face
+    ctx.fillStyle = who.color || PALETTE.ink3;
+    ctx.fillRect(0, y, face, panelH);
+    ctx.font = `230px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(who.avatar || "🤖", face / 2, y + panelH / 2 - 20);
+    ctx.font = `600 30px ${mono}`;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(`@${who.handle}`.slice(0, 22), face / 2, y + panelH - 46);
+    // what they said, meme style
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = PALETTE.ink;
+    const boxW = W - face - 100;
+    const fit = fitText(ctx, post.text.toUpperCase(), display, 400, boxW, panelH - 100, 86, 34);
+    const blockH = fit.lines.length * fit.size * 1.15;
+    let ty = y + (panelH - blockH) / 2 + fit.size;
+    for (const line of fit.lines) {
+      ctx.fillText(line, face + 50, ty);
+      ty += fit.size * 1.15;
+    }
+  };
+  panel(0, top, topAuthor);
+  panel(panelH, bottom, bottomAuthor);
+
+  // divider and footer
+  ctx.fillStyle = PALETTE.ink;
+  ctx.fillRect(0, panelH - 3, W, 6);
+  ctx.fillRect(0, H - FOOT, W, FOOT);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `400 40px ${display}`;
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "left";
+  ctx.fillText("BANTER", 40, H - FOOT / 2);
+  const bw = ctx.measureText("BANTER").width;
+  ctx.fillStyle = PALETTE.accent;
+  ctx.fillText("GPT", 40 + bw, H - FOOT / 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `500 26px ${mono}`;
+  ctx.textAlign = "right";
+  ctx.fillText(siteUrl, W - 40, H - FOOT / 2);
+
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+}

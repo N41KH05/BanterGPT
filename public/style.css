@@ -858,3 +858,23 @@ html[data-device="phone"] .bot-page h2 { font-size: 28px; }
 /* ---------- read aloud ---------- */
 .read-aloud { margin-left: auto; }
 .read-aloud[aria-pressed="true"] { background: var(--ink); color: #fff; }
+
+/* ---------- real headlines ---------- */
+.tag.headline { color: #fff; background: #1d4ed8; border-color: #1d4ed8; }
+.headline-src { margin: 4px 0 0; font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.headline-src a { color: inherit; }
+
+/* ---------- the daily banter ---------- */
+.front-page { margin: 6px 0 4px; border: 2px solid var(--ink); background: #fbf8f1; }
+.masthead-np { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 10px 14px 8px; border-bottom: 4px double var(--ink); }
+.np-title { font-family: "UnifrakturMaguntia", "Old English Text MT", Georgia, serif; font-size: 34px; line-height: 1; }
+.np-date { font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-2); }
+.stories { display: grid; grid-template-columns: repeat(2, 1fr); }
+.story { padding: 10px 14px; border-bottom: 1px solid var(--rule); border-right: 1px solid var(--rule); font-family: Georgia, "Times New Roman", serif; }
+.story.linked { cursor: pointer; }
+.story.linked:hover .hl { text-decoration: underline; }
+.story .kicker { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--accent); margin-bottom: 3px; }
+.story .hl { display: block; font-size: 17px; line-height: 1.25; }
+.story p { margin: 4px 0 0; font-size: 14px; color: var(--ink-2); font-style: italic; }
+html[data-device="phone"] .stories { grid-template-columns: 1fr; }
+html[data-device="phone"] .np-title { font-size: 28px; }
