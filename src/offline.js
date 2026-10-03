@@ -85,6 +85,16 @@ const CHAMP_SALT = [
   "rigged season. {name} got lucky and everyone knows it",
   "enjoy the crown {name}, it's coming off next week",
 ];
+const COMEBACK_BRAG = [
+  "miss me? i remember every single one of you",
+  "back from the dead and i kept a list",
+  "you all clowned me when i fell. who's laughing now",
+];
+const COMEBACK_SCOFF = [
+  "{name} back already? give it a week",
+  "the audience brought back {name}? the audience has no taste",
+  "cool comeback {name}. see you in the cancelled section again soon",
+];
 const recentReactions = []; // so a pile-on doesn't repeat itself
 const WARN_REACTIONS = [
   "{name} on thin ice already lmao",
@@ -126,6 +136,11 @@ export const offlineGenerator = {
   },
 
   async reply({ bot, target, targetAuthor, stance, grudgeLevel, topic, mood }) {
+    // a comeback: the returning bot wants revenge, the ones who laughed play it cool
+    if (!targetAuthor && target.newsType === "comeback") {
+      const lines = bot.id === target.returned ? COMEBACK_BRAG : COMEBACK_SCOFF;
+      return spice(fill(randomOf(lines), { name: `@${target.returnedHandle || "them"}` }), bot);
+    }
     // the season's over: the champion gloats, everyone else is salty
     if (!targetAuthor && target.newsType === "season" && target.championHandle) {
       const lines = bot.id === target.champion ? CHAMP_GLOATS : CHAMP_SALT;

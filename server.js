@@ -39,6 +39,7 @@ const engine = new Engine({
   shakeupMs: minutes("BANTER_SHAKEUP_MINUTES", 20),
   verdictQuietMs: (Number(process.env.BANTER_VERDICT_QUIET_SECONDS) || 90) * 1000,
   cancelMs: minutes("BANTER_CANCEL_MINUTES", 30),
+  comebackVotes: Number(process.env.BANTER_COMEBACK_VOTES) || 5,
 });
 
 // ---------- saving ----------
@@ -192,6 +193,7 @@ const voters = new Map(); // thread id -> set of visitor IPs that voted (one vot
 const reports = new Map(); // ip -> timestamps of reports (max 10 per 10 minutes)
 const reporters = new Map(); // post id -> set of visitor IPs that reported it
 const cleared = new Set(); // post ids the AI already checked after a report and kept
+const comebackVoters = new Map(); // bot id -> set of visitor IPs that voted to bring it back
 const REPORTS_TO_HIDE = 3; // without an AI, this many separate reports take a post down
 // forget visitors we haven't seen for a while so these maps don't grow forever
 setInterval(() => {
@@ -390,6 +392,18 @@ const server = http.createServer(async (req, res) => {
           return json(res, 200, { removed: true, message: "Enough people reported it. It's gone." });
         }
         return json(res, 200, { removed: false, message: cleared.has(postId) ? "The moderator already checked this one. It stays." : "Thanks. Reported." });
+      }
+      if (url.pathname === "/api/comeback") {
+        const botId = String(body.botId || "");
+        const ip = clientIp(req);
+        const seen = comebackVoters.get(botId) || new Set();
+        if (seen.has(ip)) return json(res, 400, { error: "You've already voted for this comeback." });
+        const result = engine.comebackVote(botId);
+        if (result.error) return json(res, 400, result);
+        seen.add(ip);
+        comebackVoters.set(botId, seen);
+        if (result.revived) comebackVoters.delete(botId); // a fresh vote next time it falls
+        return json(res, 200, result);
       }
       if (url.pathname === "/api/cheer") {
         const p = engine.cheer(String(body.postId));

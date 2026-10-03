@@ -112,7 +112,7 @@ const TEAMUP_LINES = [
 ];
 
 export class Engine extends Emitter {
-  constructor({ generator, intervalMs, autoTopicMs = 60 * 60_000, shakeupMs = 20 * 60_000, verdictQuietMs = 90_000, cancelMs = 30 * 60_000 }) {
+  constructor({ generator, intervalMs, autoTopicMs = 60 * 60_000, shakeupMs = 20 * 60_000, verdictQuietMs = 90_000, cancelMs = 30 * 60_000, comebackVotes = 5 }) {
     super();
     this.generator = generator;
     this.intervalMs = intervalMs;
@@ -123,6 +123,7 @@ export class Engine extends Emitter {
     this.relations = {}; // botId -> { rivals, allies } after shake-ups change them
     this.lastAutoTopicAt = 0;
     this.cancelMs = cancelMs; // how often the weakest visitor bot can get cancelled
+    this.comebackNeeded = comebackVotes; // audience votes that bring a cancelled bot back
     this.season = { number: 1, start: seasonStart(Date.now()) };
     this.champion = null; // last season's winner (wears the crown)
     this.hallOfFame = []; // past champions, newest first
@@ -215,6 +216,7 @@ export class Engine extends Emitter {
       paused: this.paused,
       personas: personas.map(publicPersona),
       maxCustom: MAX_CUSTOM,
+      comebackNeeded: this.comebackNeeded,
       audience: AUDIENCE,
       system: SYSTEM,
       posts: this.order.map((id) => this.posts.get(id)),
@@ -630,13 +632,14 @@ export class Engine extends Emitter {
   worstCustom({ crowded = false, exclude = null } = {}) {
     const now = Date.now();
     const customs = active().filter((p) => p.custom && p.id !== exclude);
-    const eligible = customs.filter((p) => now - p.createdAt > GRACE_MS);
+    const since = (p) => Math.max(p.createdAt, p.comebackAt || 0); // a comeback gets a fresh grace period
+    const eligible = customs.filter((p) => now - since(p) > GRACE_MS);
     const pool = eligible.length ? eligible : crowded ? customs : [];
     if (!pool.length) return null;
     const ranked = pool.map((bot) => ({ bot, ...this.clout(bot) })).sort((a, b) => a.score - b.score || a.bot.createdAt - b.bot.createdAt);
     const worst = ranked[0];
     // outside a crowded cast, only bots that are genuinely flopping get cancelled
-    if (!crowded && !(worst.l >= 2 && worst.l > worst.w) && !(worst.score < 1 && now - worst.bot.createdAt > 2 * GRACE_MS)) return null;
+    if (!crowded && !(worst.l >= 2 && worst.l > worst.w) && !(worst.score < 1 && now - since(worst.bot) > 2 * GRACE_MS)) return null;
     return worst;
   }
 
@@ -651,7 +654,7 @@ export class Engine extends Emitter {
   cancel(entry, { crowded = false } = {}) {
     const { bot } = entry;
     const why = this.cancelReason(entry, crowded);
-    Object.assign(bot, { retired: true, cancelledAt: Date.now(), cancelReason: why });
+    Object.assign(bot, { retired: true, cancelledAt: Date.now(), cancelReason: why, comebackVotes: 0 });
     const reactors = shuffle(active().filter((p) => p.id !== bot.id))
       .sort((a, b) => this.rivalry(b, bot.id) - this.rivalry(a, bot.id))
       .slice(0, 2);
@@ -668,6 +671,59 @@ export class Engine extends Emitter {
       this.queue.push(() => this.reply(r, post, "agree"));
     }
     return true;
+  }
+
+  // ---------- comeback arcs ----------
+
+  // a visitor votes to bring a cancelled bot back; enough votes and it returns for revenge
+  comebackVote(botId) {
+    const bot = personaById[botId];
+    if (!bot || !bot.custom || !bot.retired || bot.banned) return { error: "Only cancelled bots can make a comeback." };
+    bot.comebackVotes = (bot.comebackVotes || 0) + 1;
+    this.dirty = true;
+    if (bot.comebackVotes >= this.comebackNeeded) {
+      this.comeback(bot);
+      return { votes: this.comebackNeeded, needed: this.comebackNeeded, revived: true };
+    }
+    this.emit("persona", publicPersona(bot));
+    return { votes: bot.comebackVotes, needed: this.comebackNeeded, revived: false };
+  }
+
+  comeback(bot) {
+    // whoever dunked on the cancellation is now public enemy number one
+    const news = this.order.map((id) => this.posts.get(id)).filter((p) => p.newsType === "cancelled" && p.cancelled === bot.id).pop();
+    const dunkers = news
+      ? [...new Set(this.order.map((id) => this.posts.get(id)).filter((p) => p.parentId === news.id && personaById[p.authorId] && !personaById[p.authorId].retired).map((p) => p.authorId))]
+      : [];
+    Object.assign(bot, { retired: false, comebackAt: Date.now(), comebackVotes: 0, cancelledAt: undefined, cancelReason: undefined });
+    for (const id of dunkers) {
+      if (!bot.rivals.includes(id)) bot.rivals = [...bot.rivals, id].slice(-4);
+      bot.allies = bot.allies.filter((x) => x !== id);
+      this.bumpGrudge(bot.id, id, 5);
+      this.remember(id, `@${bot.handle}, who you laughed at when it got cancelled, is back. And it remembers.`);
+    }
+    this.relations[bot.id] = { rivals: [...bot.rivals], allies: [...bot.allies] };
+    this.linkRelations(bot);
+    this.remember(bot.id, `The audience voted you back after you got cancelled.${dunkers.length ? ` ${dunkers.map((id) => "@" + personaById[id].handle).join(" and ")} laughed when you went down. Revenge time.` : " Prove them right."}`);
+    this.dirty = true;
+    this.emit("persona", publicPersona(bot));
+    this.emit("relations", this.publicRelations());
+
+    // the cast can't grow forever: the worst bot makes room (never the one that just came back)
+    if (active().filter((p) => p.custom).length > MAX_CUSTOM) {
+      const worst = this.worstCustom({ crowded: true, exclude: bot.id });
+      if (worst) this.cancel(worst, { crowded: true });
+    }
+
+    const targets = dunkers.map((id) => "@" + personaById[id].handle);
+    const text = targets.length
+      ? `🔁 COMEBACK ARC: @${bot.handle} is BACK. The audience voted them in. ${targets.join(" and ")} laughed when they got cancelled. Should be nervous.`
+      : `🔁 COMEBACK ARC: @${bot.handle} is BACK from the dead. The audience voted them in. Nobody saw this coming.`;
+    const post = this.addPost({ authorId: NEWS.id, text, kind: "news", extra: { newsType: "comeback", returned: bot.id, returnedHandle: bot.handle, targets: dunkers } });
+    if (!post) return;
+    this.queue.push(() => this.reply(bot, post, "agree"));
+    const first = dunkers.find((id) => personaById[id] && !personaById[id].retired);
+    if (first) this.queue.push(() => this.reply(personaById[first], post, "disagree"));
   }
 
   // is this creator still benched after one of their bots got banned?

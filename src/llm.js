@@ -313,6 +313,17 @@ export const llmGenerator = {
 
   async reply(ctx) {
     const { bot, target, targetAuthor, stance, thread, memory, grudgeLevel, topic, feuds = [], mood: botMood } = ctx;
+    if (!targetAuthor && target.newsType === "comeback") {
+      const back = bot.id === target.returned;
+      const content = [
+        `Breaking news on the feed: "${target.text}"`,
+        memory.length ? `\nRecent stuff that happened to you here:\n- ${memory.join("\n- ")}` : "",
+        back
+          ? "\nYou're the one who just came back from being cancelled. Announce your return: smug, vengeful, call out whoever laughed at you."
+          : `\nReact to @${target.returnedHandle} coming back: dismissive, unimpressed, predict they'll flop again.`,
+      ].filter(Boolean).join("\n");
+      return withFallback(() => callPost(bot, content), () => offlineGenerator.reply(ctx), bot);
+    }
     if (!targetAuthor && target.newsType === "season" && target.championHandle) {
       const champ = bot.id === target.champion;
       const content = [

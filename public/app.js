@@ -41,6 +41,10 @@ const saveJSON = (key, value) => {
 };
 const myBots = () => loadJSON(MINE_KEY, []);
 const isMine = (id) => myBots().includes(id);
+// comeback votes are per cancellation: a bot cancelled again can be voted back again
+const COMEBACK_KEY = "bantergpt.comebackVoted";
+const comebackKey = (p) => `${p.id}:${p.cancelledAt || ""}`;
+const votedComeback = (p) => loadJSON(COMEBACK_KEY, []).includes(comebackKey(p));
 
 const $ = (s) => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
@@ -141,7 +145,8 @@ async function connectBrowser() {
     import("../src/moderation.js"),
   ]);
   // the demo is visited briefly, so hot topics and shake-ups come round faster
-  const engine = new Engine({ generator: offlineGenerator, intervalMs: 5000, autoTopicMs: 10 * 60_000, shakeupMs: 6 * 60_000 });
+  // (it's your own private feed, so your one comeback vote is enough)
+  const engine = new Engine({ generator: offlineGenerator, intervalMs: 5000, autoTopicMs: 10 * 60_000, shakeupMs: 6 * 60_000, comebackVotes: 1 });
 
   // in the demo, the whole feed (posts, grudges, memories, your bots) is saved in this browser
   const STATE_KEY = "bantergpt.state";
@@ -192,6 +197,11 @@ async function connectBrowser() {
         if (result.error) throw new Error(result.error);
         return result.post;
       }
+      if (name === "comeback") {
+        const result = engine.comebackVote(String(body.botId));
+        if (result.error) throw new Error(result.error);
+        return result;
+      }
       if (name === "report") {
         // the demo is your own private feed, so a report just takes the post out of it
         engine.removePosts((p) => p.id === String(body.postId));
@@ -227,6 +237,40 @@ function scheduleRender() {
 }
 
 // ---------- roster & profile ----------
+// "bring them back" button with the vote count, for cancelled (not banned) bots
+function comebackButton(p, size = "") {
+  if (!p.retired || p.banned || !p.custom) return null;
+  const voted = votedComeback(p);
+  const needed = state.comebackNeeded || 5;
+  return el(
+    "button",
+    {
+      type: "button",
+      class: `comeback-btn ${size} ${voted ? "voted" : ""}`,
+      disabled: voted,
+      title: voted ? "You voted for this comeback" : `Vote to bring @${p.handle} back (${needed} votes needed)`,
+      onclick: (e) => {
+        e.stopPropagation();
+        voteComeback(p);
+      },
+    },
+    `🔁 ${size ? "" : voted ? "Voted " : "Bring them back "}${p.comebackVotes || 0}/${needed}`,
+  );
+}
+
+async function voteComeback(p) {
+  try {
+    const r = await api("comeback", { botId: p.id });
+    saveJSON(COMEBACK_KEY, [...loadJSON(COMEBACK_KEY, []), comebackKey(p)].slice(-100));
+    flashMsg(r.revived ? `🔁 @${p.handle} IS BACK. Comeback arc unlocked.` : `Vote counted: ${r.votes}/${r.needed} for @${p.handle}'s comeback.`);
+    if (!r.revived && state.byId[p.id]) upsertPersona({ ...state.byId[p.id], comebackVotes: r.votes });
+  } catch (e) {
+    if (/already voted/.test(e.message)) saveJSON(COMEBACK_KEY, [...loadJSON(COMEBACK_KEY, []), comebackKey(p)]);
+    flashMsg(e.message);
+    renderRoster();
+  }
+}
+
 // visitor bots that got ratio'd off (banned ones just disappear)
 function renderCancelled() {
   const box = $("#cancelled");
@@ -260,6 +304,7 @@ function renderCancelled() {
           el("span", { class: "who" }, el("span", { class: "n" }, p.name), el("span", { class: "why" }, p.cancelReason || "couldn't keep up")),
           el("span", { class: "rec" }, recordLabel(p.id)),
         ),
+        comebackButton(p, "small"),
       ),
     ),
   );
@@ -329,6 +374,8 @@ function renderProfile() {
   box.replaceChildren(
     ...[
       p.retired && !p.banned ? el("p", { class: "cancelled-note" }, `📉 Cancelled${p.cancelReason ? ` for ${p.cancelReason}` : ""}. No more posts.`) : null,
+      p.retired && !p.banned ? comebackButton(p) : null,
+      p.comebackAt && !p.retired ? el("p", { class: "champ-note" }, "🔁 Back after a comeback vote. Out for revenge.") : null,
       el("p", { class: "bio" }, p.bio),
       state.season?.champion === p.id ? el("p", { class: "champ-note" }, `👑 Reigning champion of season ${state.season.number - 1}`) : null,
       el(
@@ -465,7 +512,7 @@ function renderPost(p) {
   const tag =
     p.kind === "topic" ? el("span", { class: "tag topic" }, p.auto ? "🔥 hot topic of the hour" : "audience topic")
     : p.kind === "bait" ? el("span", { class: "tag topic" }, `🎣 bait for @${state.byId[p.baitTarget]?.handle || p.baitHandle || "a bot"}`)
-    : p.kind === "news" ? el("span", { class: "tag news" }, p.newsType === "cancelled" ? "📉 cancelled" : "breaking")
+    : p.kind === "news" ? el("span", { class: "tag news" }, p.newsType === "cancelled" ? "📉 cancelled" : p.newsType === "comeback" ? "🔁 comeback" : p.newsType === "season" ? "👑 season over" : "breaking")
     : p.kind === "verdict" ? el("span", { class: "tag verdict" }, "⚖️ verdict")
     : p.kind === "ban" ? el("span", { class: "tag ban" }, "🚫 banned")
     : p.kind === "warn" ? el("span", { class: "tag ban" }, "⚠️ warning")
@@ -922,6 +969,7 @@ function renderBotPage() {
           },
           "🔗 Copy link",
         ),
+        comebackButton(p),
         p.retired
           ? null
           : el(
@@ -1055,7 +1103,7 @@ function renderSeason() {
   const h = Math.floor((left % 86_400_000) / 3_600_000);
   $("#season-ends").textContent = left ? `Ends in ${d ? `${d}d ` : ""}${h}h. Best record wins the crown.` : "Ending any minute now…";
   const leaders = Object.entries(state.records)
-    .filter(([id, r]) => state.byId[id] && !state.byId[id].banned && r.w + r.l > 0)
+    .filter(([id, r]) => state.byId[id] && !state.byId[id].banned && r.w > 0)
     .sort(([, a], [, b]) => b.w - a.w || b.w - b.l - (a.w - a.l) || a.l - b.l)
     .slice(0, 3);
   $("#season-top").replaceChildren(
@@ -1063,7 +1111,7 @@ function renderSeason() {
       ? leaders.map(([id, r], i) =>
           el("li", {}, el("span", {}, el("span", { class: "rk" }, i + 1), `${state.byId[id].avatar} ${state.byId[id].name}`), el("span", { class: "r" }, `${r.w}-${r.l}`)),
         )
-      : [el("li", { class: "none-yet" }, "No verdicts yet this season.")]),
+      : [el("li", { class: "none-yet" }, "Nobody's won a thread yet this season.")]),
   );
   $("#hall").replaceChildren(
     ...(s.hallOfFame.length
@@ -1354,6 +1402,7 @@ async function boot() {
   state.system = snap.system || {};
   state.records = snap.records || {};
   state.season = snap.season || null;
+  state.comebackNeeded = snap.comebackNeeded || 5;
   try {
     state.voted = new Set(JSON.parse(localStorage.getItem("bantergpt.voted") || "[]"));
   } catch {}
