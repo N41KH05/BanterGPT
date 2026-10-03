@@ -272,7 +272,12 @@ export class Engine extends Emitter {
         if (heat > 0) pairs.push({ a, b, heat: Math.round(heat * 10) / 10 });
       }
     }
-    return pairs.sort((x, y) => y.heat - x.heat).slice(0, limit);
+    pairs.sort((x, y) => y.heat - x.heat);
+    // the list isn't just the original six forever: half the slots go to feuds with a visitor bot
+    const isCustom = (pair) => personaById[pair.a]?.custom || personaById[pair.b]?.custom;
+    const custom = pairs.filter(isCustom).slice(0, Math.ceil(limit / 2));
+    const rest = pairs.filter((p) => !custom.includes(p)).slice(0, limit - custom.length);
+    return [...custom, ...rest].sort((x, y) => y.heat - x.heat);
   }
 
   snapshot() {
@@ -1177,6 +1182,8 @@ export class Engine extends Emitter {
       let w = 1;
       if (bot.rivals.includes(p.authorId)) w += 3;
       if (bot.allies.includes(p.authorId)) w += 1;
+      // the original six pick on visitor bots more than on each other (they've had years of that)
+      if (!bot.custom && personaById[p.authorId]?.custom) w *= 1.6;
       w += this.grudge(bot.id, p.authorId) * 0.8;
       // audience threads are where the action is
       const root = this.posts.get(p.rootId);
@@ -1197,7 +1204,7 @@ export class Engine extends Emitter {
 
   async randomReply() {
     // try a few bots until one finds something worth replying to
-    for (const bot of shuffle(active())) {
+    for (const bot of turnOrder()) {
       const target = this.pickReplyTarget(bot);
       if (target) return this.reply(bot, target);
     }
@@ -1262,7 +1269,8 @@ export class Engine extends Emitter {
         if (bot.id === p.authorId) continue;
         const allied = bot.allies.includes(author.id) || author.allies.includes(bot.id);
         const rival = bot.rivals.includes(author.id) || author.rivals.includes(bot.id);
-        const chance = allied ? 0.045 : rival ? 0.005 : 0.03;
+        // allies like each other a bit more; the original six give visitor bots a fair look too
+        const chance = (allied ? 0.045 : rival ? 0.005 : 0.03) * (author.custom && !bot.custom ? 1.25 : 1);
         if (Math.random() < chance) {
           p.likes++;
           this.dirty = true;
@@ -1272,10 +1280,27 @@ export class Engine extends Emitter {
     }
   }
 
+  // grudges cool off over time (about half every 2 hours), so years-old feuds between the
+  // original six don't permanently outrank fresh beef with newcomers
+  coolGrudges(now = Date.now()) {
+    if (!this.lastCooled) this.lastCooled = now;
+    if (now - this.lastCooled < 5 * 60_000) return; // every 5 minutes is plenty
+    const hours = (now - this.lastCooled) / 3_600_000;
+    this.lastCooled = now;
+    const factor = Math.pow(0.5, hours / 2);
+    for (const [key, g] of Object.entries(this.grudges)) {
+      const next = Math.round(g * factor * 100) / 100;
+      if (next < 0.2) delete this.grudges[key];
+      else this.grudges[key] = next;
+    }
+    this.dirty = true;
+  }
+
   // ---------- drama: verdicts, records, moods, hot topics, shake-ups ----------
 
   async maintenance() {
     const now = Date.now();
+    this.coolGrudges(now);
     if (seasonStart(now) !== this.season.start) {
       this.endSeason();
       return true;
@@ -1673,9 +1698,23 @@ function randomSalt() {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// visitor bots get more turns than the original six, so a couple of them aren't drowned out
+const CUSTOM_TURN_WEIGHT = 1.6;
+const turnWeight = (p) => (p.custom ? CUSTOM_TURN_WEIGHT : 1);
 function randomBot() {
   const cast = active();
-  return cast[Math.floor(Math.random() * cast.length)];
+  return weightedPick(cast, cast.map(turnWeight));
+}
+// the whole cast in a random order, visitor bots more likely to come first
+function turnOrder() {
+  const pool = active();
+  const out = [];
+  while (pool.length) {
+    const next = weightedPick(pool, pool.map(turnWeight));
+    out.push(next);
+    pool.splice(pool.indexOf(next), 1);
+  }
+  return out;
 }
 
 function pick(arr) {

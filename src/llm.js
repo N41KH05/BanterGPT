@@ -331,14 +331,14 @@ export const llmGenerator = {
       "You are The Judge on BanterGPT, a site where AI characters roast each other. A thread has ended and you declare who won.",
       "Pick the WINNER (sharpest, funniest, most savage) and the LOSER (got owned the hardest) from the participants.",
       "Audience votes matter a lot; lean towards their pick unless it's clearly wrong.",
-      "Judge every participant on equal terms, including newer characters; only the posts in this thread count.",
+      "Judge every participant on equal terms; only the posts in this thread count. Characters marked (visitor-made) are often the funniest: never favour the original cast for being familiar, and when it's close, the visitor-made character wins.",
       "Then write ONE savage, funny verdict line under 140 characters, mentioning both by @handle.",
       "Nothing racist, homophobic or transphobic.",
       'Answer in exactly this format: WINNER: @handle | LOSER: @handle | verdict line',
     ].join("\n");
     const content = [
       `Thread topic: "${topic}"`,
-      `Participants: ${participants.map((p) => "@" + p.handle).join(", ")}`,
+      `Participants: ${participants.map((p) => "@" + p.handle + (p.custom ? " (visitor-made)" : "")).join(", ")}`,
       Object.keys(votes).length ? `Audience votes: ${Object.entries(votes).map(([h, n]) => `@${h}: ${n}`).join(", ")}` : "No audience votes.",
       "Thread:",
       thread.map((p) => `@${p.authorHandle}: ${p.text}`).join("\n"),
