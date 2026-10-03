@@ -40,6 +40,7 @@ const engine = new Engine({
   verdictQuietMs: (Number(process.env.BANTER_VERDICT_QUIET_SECONDS) || 90) * 1000,
   cancelMs: minutes("BANTER_CANCEL_MINUTES", 30),
   comebackVotes: Number(process.env.BANTER_COMEBACK_VOTES) || 5,
+  timezone: process.env.BANTER_TIMEZONE || "Europe/Helsinki",
 });
 
 // ---------- saving ----------
@@ -143,6 +144,7 @@ engine.on("removed", (ids) => broadcast("removed", ids));
 engine.on("records", (r) => broadcast("records", r));
 engine.on("relations", (r) => broadcast("relations", r));
 engine.on("season", (s) => broadcast("season", s));
+engine.on("vibe", (v) => broadcast("vibe", { vibe: v }));
 setInterval(() => {
   for (const res of clients) res.write(": ping\n\n");
 }, 25000);
@@ -193,6 +195,7 @@ const voters = new Map(); // thread id -> set of visitor IPs that voted (one vot
 const reports = new Map(); // ip -> timestamps of reports (max 10 per 10 minutes)
 const reporters = new Map(); // post id -> set of visitor IPs that reported it
 const cleared = new Set(); // post ids the AI already checked after a report and kept
+const trialVoters = new Map(); // trial id -> set of visitor IPs that voted
 const comebackVoters = new Map(); // bot id -> set of visitor IPs that voted to bring it back
 const REPORTS_TO_HIDE = 3; // without an AI, this many separate reports take a post down
 // forget visitors we haven't seen for a while so these maps don't grow forever
@@ -392,6 +395,40 @@ const server = http.createServer(async (req, res) => {
           return json(res, 200, { removed: true, message: "Enough people reported it. It's gone." });
         }
         return json(res, 200, { removed: false, message: cleared.has(postId) ? "The moderator already checked this one. It stays." : "Thanks. Reported." });
+      }
+      if (url.pathname === "/api/review") {
+        const thing = String(body.thing || "").replace(/\s+/g, " ").trim().slice(0, 80);
+        if (thing.length < 2) return json(res, 400, { error: "Name something for the bots to review." });
+        if (screenText(thing)) return json(res, 400, { error: REFUSAL });
+        if (live) {
+          const review = await llm.aiReview("thing to review", thing, { failOpen: true });
+          if (!review.allowed) return json(res, 400, { error: refusalMessage(review, "review") });
+        }
+        const post = await engine.reviewThing(thing);
+        return json(res, post ? 200 : 400, post || { error: "Couldn't post that." });
+      }
+      if (url.pathname === "/api/trial") {
+        const charge = String(body.charge || "").replace(/\s+/g, " ").trim().slice(0, 80);
+        if (charge.length < 3) return json(res, 400, { error: "What are they accused of?" });
+        if (screenText(charge)) return json(res, 400, { error: REFUSAL });
+        if (live) {
+          const review = await llm.aiReview("accusation against a character", charge, { failOpen: true });
+          if (!review.allowed) return json(res, 400, { error: refusalMessage(review, "accusation") });
+        }
+        const result = engine.trial(String(body.botId || ""), charge);
+        return json(res, result.error ? 400 : 200, result.error ? result : result.post);
+      }
+      if (url.pathname === "/api/trial-vote") {
+        const rootId = String(body.rootId || "");
+        const ip = clientIp(req);
+        const seen = trialVoters.get(rootId) || new Set();
+        if (seen.has(ip)) return json(res, 400, { error: "You've already voted in this trial." });
+        const result = engine.trialVote(rootId, String(body.verdict || ""));
+        if (result.error) return json(res, 400, result);
+        seen.add(ip);
+        trialVoters.set(rootId, seen);
+        if (trialVoters.size > 200) trialVoters.delete(trialVoters.keys().next().value);
+        return json(res, 200, result);
       }
       if (url.pathname === "/api/comeback") {
         const botId = String(body.botId || "");

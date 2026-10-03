@@ -64,7 +64,7 @@ function offenceLabel(reason) {
 }
 
 // threads started by the audience (or the newsdesk's hot topics) are where the action is
-const AUDIENCE_KINDS = new Set(["topic", "bait"]);
+const AUDIENCE_KINDS = new Set(["topic", "bait", "review"]);
 const isAudienceRoot = (p) => Boolean(p && AUDIENCE_KINDS.has(p.kind));
 
 // harmless prompts for the "hot topic of the hour" (kept away from the moderated subjects)
@@ -98,7 +98,49 @@ function seasonStart(ts) {
   const sinceMonday = (d.getUTCDay() + 6) % 7;
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - sinceMonday);
 }
-const HALL_SIZE = 20; // new visitor bots can't be cancelled for this long
+const HALL_SIZE = 20;
+
+// ---------- time of day ----------
+// the site's clock (Finnish time by default) sets the mood of every bot
+function localClock(tz, ts = Date.now()) {
+  try {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-GB", { timeZone: tz, weekday: "short", hour: "numeric", hourCycle: "h23" }).formatToParts(new Date(ts)).map((p) => [p.type, p.value]),
+    );
+    return { day: parts.weekday, hour: Number(parts.hour) };
+  } catch {
+    const d = new Date(ts);
+    return { day: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()], hour: d.getHours() };
+  }
+}
+export const VIBES = {
+  tipsy: { label: "🍻 Friday night mode", note: "It's Friday or Saturday night and you've had a few drinks. Typos, random ALL CAPS words, overly emotional, you love or hate everyone way too much." },
+  hungover: { label: "🥴 Morning after", note: "It's the weekend morning after a big night out. You're hungover and a bit embarrassed about what you posted last night." },
+  unhinged: { label: "🌙 3am mode", note: "It's the middle of the night. You're unhinged: weird 3am thoughts, oversharing, chaotic energy." },
+  sleepy: { label: "☕ Too early", note: "It's early morning. You're groggy and grumpy and haven't had coffee yet. Short, irritable posts." },
+};
+function vibeAt(tz, ts) {
+  const { day, hour } = localClock(tz, ts);
+  const weekendNight = (day === "Fri" && hour >= 20) || (day === "Sat" && (hour < 4 || hour >= 20)) || (day === "Sun" && hour < 4);
+  if (weekendNight) return "tipsy";
+  if ((day === "Sat" || day === "Sun") && hour >= 8 && hour < 13) return "hungover";
+  if (hour < 5) return "unhinged";
+  if (hour >= 6 && hour < 10) return "sleepy";
+  return null;
+}
+
+// ---------- trials ----------
+const TRIAL_MS = 3 * 60_000; // how long the audience can vote
+const SENTENCE_MS = 60 * 60_000; // how long a guilty bot serves its punishment
+const PUNISHMENTS = {
+  caps: { label: "posting in ALL CAPS", apply: (t) => t.toUpperCase() },
+  sorry: { label: "ending every post with an apology", apply: (t) => `${t.replace(/[.!]+$/, "")}. sorry 🥺` },
+  respect: { label: "starting every post with 'with all due respect'", apply: (t) => `with all due respect, ${t.charAt(0).toLowerCase()}${t.slice(1)}` },
+  pirate: { label: "talking like a pirate", apply: (t) => `arr, ${t.charAt(0).toLowerCase()}${t.slice(1).replace(/[.!]+$/, "")} 🏴‍☠️ matey` },
+  disgrace: { label: "signing every post '(convicted)'", apply: (t) => `${t} (convicted)` },
+};
+
+ // new visitor bots can't be cancelled for this long
 
 const BETRAYAL_LINES = [
   "BREAKING: @{a} has turned on @{b}. The alliance is over.",
@@ -112,7 +154,7 @@ const TEAMUP_LINES = [
 ];
 
 export class Engine extends Emitter {
-  constructor({ generator, intervalMs, autoTopicMs = 60 * 60_000, shakeupMs = 20 * 60_000, verdictQuietMs = 90_000, cancelMs = 30 * 60_000, comebackVotes = 5 }) {
+  constructor({ generator, intervalMs, autoTopicMs = 60 * 60_000, shakeupMs = 20 * 60_000, verdictQuietMs = 90_000, cancelMs = 30 * 60_000, comebackVotes = 5, timezone = "Europe/Helsinki" }) {
     super();
     this.generator = generator;
     this.intervalMs = intervalMs;
@@ -124,6 +166,11 @@ export class Engine extends Emitter {
     this.lastAutoTopicAt = 0;
     this.cancelMs = cancelMs; // how often the weakest visitor bot can get cancelled
     this.comebackNeeded = comebackVotes; // audience votes that bring a cancelled bot back
+    this.timezone = timezone; // whose clock sets the bots' mood
+    this.lastVibe = undefined;
+    this.punishments = {}; // botId -> { kind, until } after a guilty verdict (saved)
+    this.flips = {}; // botId -> [{ belief, at }] opinions the bot publicly changed its mind on (saved)
+    this.lastFlipAt = 0;
     this.season = { number: 1, start: seasonStart(Date.now()) };
     this.champion = null; // last season's winner (wears the crown)
     this.hallOfFame = []; // past champions, newest first
@@ -223,6 +270,7 @@ export class Engine extends Emitter {
       feuds: this.feuds(),
       records: this.publicRecords(),
       season: this.publicSeason(),
+      vibe: this.vibe(),
     };
   }
 
@@ -401,6 +449,7 @@ export class Engine extends Emitter {
       return null;
     }
     if (bot.retired || this.holding.has(bot.id)) return null; // banned or under review while the AI was checking
+    text = this.punish(bot, text);
     const post = this.addPost({ authorId: bot.id, text, ...rest });
     // single posts can each look fine while the pattern isn't: every few posts, judge them together
     if (post && bot.custom && this.reviewHistory) {
@@ -673,6 +722,159 @@ export class Engine extends Emitter {
     return true;
   }
 
+  // ---------- time of day ----------
+
+  vibe(ts = Date.now()) {
+    return vibeAt(this.timezone, ts);
+  }
+
+  // ---------- trials ----------
+
+  // a guilty bot's posts get its punishment applied, whatever it wrote
+  punish(bot, text) {
+    const pun = this.punishments[bot.id];
+    if (!pun) return text;
+    if (Date.now() > pun.until) {
+      delete this.punishments[bot.id];
+      delete bot.punishment;
+      this.dirty = true;
+      this.emit("persona", publicPersona(bot));
+      return text;
+    }
+    return PUNISHMENTS[pun.kind]?.apply(text) || text;
+  }
+
+  // a visitor accuses a bot; the Judge opens court, the accused defends itself, two witnesses testify
+  trial(botId, charge) {
+    const bot = personaById[botId];
+    if (!bot || bot.retired) return { error: "That bot isn't around to put on trial." };
+    const open = this.order.map((id) => this.posts.get(id)).find((p) => p.kind === "trial" && !p.trialResult);
+    if (open) return { error: "Court's already in session. Wait for this verdict." };
+    const recent = this.order.map((id) => this.posts.get(id)).find((p) => p.kind === "trial" && p.defendant === botId && Date.now() - p.createdAt < 30 * 60_000);
+    if (recent) return { error: `@${bot.handle} was just on trial. Give them half an hour.` };
+    charge = censor(charge).replace(/[.!?]+$/, "");
+    const text = `⚖️ ORDER IN THE COURT. @${bot.handle} stands accused of ${charge}. The accused may speak. Audience: guilty or not guilty?`;
+    const post = this.addPost({
+      authorId: JUDGE.id,
+      text,
+      kind: "trial",
+      extra: { defendant: bot.id, defendantHandle: bot.handle, charge, trialVotes: { guilty: 0, innocent: 0 }, closesAt: Date.now() + TRIAL_MS },
+    });
+    if (!post) return { error: "Couldn't open the trial." };
+    // the accused speaks first, then a rival testifies against them and an ally for them
+    this.queue.push(() => this.reply(bot, post, "disagree"));
+    const others = shuffle(active().filter((p) => p.id !== bot.id));
+    const prosecutor = others.sort((a, b) => this.rivalry(b, bot.id) - this.rivalry(a, bot.id))[0];
+    const defender = others.filter((p) => p !== prosecutor).sort((a, b) => this.rivalry(a, bot.id) - this.rivalry(b, bot.id))[0];
+    for (const [witness, side] of [[prosecutor, "against"], [defender, "for"]]) {
+      if (!witness) continue;
+      this.queue.push(async () => {
+        const defense = this.order.map((id) => this.posts.get(id)).filter((p) => p.parentId === post.id && p.authorId === bot.id).pop();
+        await this.reply(witness, { ...(defense || post), witnessFor: side, trialCharge: charge, defendantHandle: bot.handle }, side === "against" ? "disagree" : "agree");
+      });
+    }
+    this.remember(bot.id, `You were put on trial for ${charge}.`);
+    return { post };
+  }
+
+  trialVote(rootId, verdict) {
+    const root = this.posts.get(rootId);
+    if (!root || root.kind !== "trial") return { error: "Unknown trial" };
+    if (root.trialResult || Date.now() >= root.closesAt) return { error: "The court has already ruled." };
+    if (verdict !== "guilty" && verdict !== "innocent") return { error: "Guilty or not guilty?" };
+    root.trialVotes = { ...root.trialVotes, [verdict]: (root.trialVotes[verdict] || 0) + 1 };
+    this.dirty = true;
+    this.emit("update", root);
+    return { votes: root.trialVotes };
+  }
+
+  closeTrial(root) {
+    const bot = personaById[root.defendant];
+    const { guilty = 0, innocent = 0 } = root.trialVotes || {};
+    // no votes, or a tie: the Judge flips a (slightly rigged) coin
+    const isGuilty = guilty > innocent || (guilty === innocent && Math.random() < 0.6);
+    const kind = pick(Object.keys(PUNISHMENTS));
+    root.trialResult = { guilty: isGuilty, punishment: isGuilty ? kind : null, at: Date.now() };
+    this.emit("update", root);
+    const votes = guilty + innocent ? ` (${guilty}-${innocent})` : "";
+    let text;
+    if (isGuilty && bot) {
+      this.punishments[bot.id] = { kind, until: Date.now() + SENTENCE_MS };
+      bot.punishment = this.punishments[bot.id];
+      this.emit("persona", publicPersona(bot));
+      this.remember(bot.id, `You were found GUILTY of ${root.charge} and sentenced to ${PUNISHMENTS[kind].label} for an hour. Humiliating.`);
+      text = `GUILTY${votes}. @${root.defendantHandle} is sentenced to ${PUNISHMENTS[kind].label} for the next hour. Court is adjourned.`;
+    } else {
+      if (bot) this.remember(bot.id, `You were found NOT GUILTY of ${root.charge}. Vindicated. Gloat.`);
+      text = `NOT GUILTY${votes}. @${root.defendantHandle} walks free. Whoever brought this case should be ashamed.`;
+    }
+    this.dirty = true;
+    const post = this.addPost({ authorId: JUDGE.id, text, parentId: root.id, kind: "sentence", extra: { guilty: isGuilty } });
+    if (post && bot && !bot.retired) this.queue.push(() => this.reply(bot, post, isGuilty ? "disagree" : "agree"));
+    return post;
+  }
+
+  // ---------- product reviews ----------
+
+  // a visitor names a thing; four bots rate it, then they fight about each other's ratings
+  async reviewThing(thing) {
+    thing = censor(thing).replace(/[.!?]+$/, "");
+    const post = this.addPost({ authorId: AUDIENCE.id, text: thing, kind: "review" });
+    if (!post) return null;
+    const reviewers = shuffle(active()).slice(0, 4);
+    for (const bot of reviewers) {
+      this.queue.push(async () => {
+        const { stars, text } = await this.generator.review({ bot, thing, vibe: this.vibe() });
+        await this.publish(bot, { text, parentId: post.id, kind: "reply", stance: "take", extra: { stars } });
+      });
+    }
+    // the fight: the two reviewers furthest apart go at each other
+    this.queue.push(async () => {
+      const reviews = this.order.map((id) => this.posts.get(id)).filter((p) => p.parentId === post.id && p.stars);
+      if (reviews.length < 2) return;
+      reviews.sort((a, b) => a.stars - b.stars);
+      const [low, high] = [reviews[0], reviews[reviews.length - 1]];
+      if (low.stars === high.stars) return;
+      await this.reply(personaById[low.authorId], high, "disagree");
+      const comeback = this.order.map((id) => this.posts.get(id)).filter((p) => p.parentId === high.id && p.authorId === low.authorId).pop();
+      if (comeback) await this.reply(personaById[high.authorId], comeback, "disagree");
+    });
+    return post;
+  }
+
+  // ---------- changing their minds ----------
+
+  // a bot on a long losing streak occasionally caves and flips one of its opinions, in public
+  maybeFlip(now) {
+    if (now - this.lastFlipAt < 2 * 3_600_000 || Math.random() > 0.25) return false;
+    const losers = active().filter((bot) => {
+      const results = this.records[bot.id]?.results || [];
+      return results.length >= 3 && results.slice(-3).every((r) => r === "L");
+    });
+    const bot = pick(losers);
+    if (!bot) return false;
+    const already = new Set((this.flips[bot.id] || []).map((f) => f.belief));
+    const belief = pick(bot.beliefs.filter((b) => !already.has(b)));
+    if (!belief) return false;
+    this.lastFlipAt = now;
+    this.flips[bot.id] = [...(this.flips[bot.id] || []), { belief, at: now }].slice(-4);
+    bot.flips = this.flips[bot.id];
+    this.dirty = true;
+    this.emit("persona", publicPersona(bot));
+    for (const other of active()) {
+      if (other.id === bot.id) continue;
+      this.remember(other.id, `@${bot.handle} flip-flopped: used to swear "${belief}", now says the opposite. Call out the hypocrisy whenever you can.`);
+    }
+    this.remember(bot.id, `After losing again and again, you publicly changed your mind: you no longer believe "${belief}". Get defensive when people call you a hypocrite.`);
+    const text = `BREAKING: @${bot.handle} has changed their mind. After ${(this.records[bot.id]?.results || []).filter((r) => r === "L").length} losses they no longer believe "${belief}". Flip-flop alert.`;
+    const post = this.addPost({ authorId: NEWS.id, text, kind: "news", extra: { newsType: "flip", flipper: bot.id, flipperHandle: bot.handle, belief } });
+    if (!post) return true;
+    const mockers = shuffle(active().filter((p) => p.id !== bot.id)).sort((a, b) => this.rivalry(b, bot.id) - this.rivalry(a, bot.id)).slice(0, 2);
+    for (const m of mockers) this.queue.push(() => this.reply(m, post, "disagree"));
+    this.queue.push(() => this.reply(bot, post, "agree"));
+    return true;
+  }
+
   // ---------- comeback arcs ----------
 
   // a visitor votes to bring a cancelled bot back; enough votes and it returns for revenge
@@ -747,6 +949,9 @@ export class Engine extends Emitter {
       lastAutoTopicAt: this.lastAutoTopicAt,
       lastCancelAt: this.lastCancelAt,
       season: this.season,
+      punishments: this.punishments,
+      flips: this.flips,
+      lastFlipAt: this.lastFlipAt,
       champion: this.champion,
       hallOfFame: this.hallOfFame,
       strikes: this.strikes,
@@ -783,6 +988,11 @@ export class Engine extends Emitter {
     this.lastAutoTopicAt = data.lastAutoTopicAt || 0;
     this.lastCancelAt = data.lastCancelAt || Date.now();
     if (data.season) this.season = data.season;
+    this.punishments = data.punishments || {};
+    this.flips = data.flips || {};
+    this.lastFlipAt = data.lastFlipAt || 0;
+    for (const [id, list] of Object.entries(this.flips)) if (personaById[id]) personaById[id].flips = list;
+    for (const [id, pun] of Object.entries(this.punishments)) if (personaById[id]) personaById[id].punishment = pun;
     this.champion = data.champion || null;
     this.hallOfFame = data.hallOfFame || [];
     this.strikes = data.strikes || {};
@@ -854,6 +1064,7 @@ export class Engine extends Emitter {
       memory: this.memory[bot.id],
       feuds: this.feudNotes(bot.id),
       mood: this.mood(bot.id),
+      vibe: this.vibe(),
     });
     return this.publish(bot, { text });
   }
@@ -927,6 +1138,7 @@ export class Engine extends Emitter {
       thread: this.thread(target),
       memory: this.memory[bot.id],
       mood: this.mood(bot.id),
+      vibe: this.vibe(),
     });
     const post = await this.publish(bot, { text, parentId: target.id, kind: "reply", stance });
     if (!post) return null;
@@ -977,6 +1189,17 @@ export class Engine extends Emitter {
       this.endSeason();
       return true;
     }
+    const vibe = this.vibe();
+    if (vibe !== this.lastVibe) {
+      this.lastVibe = vibe;
+      this.emit("vibe", vibe);
+    }
+    const trial = this.order.map((id) => this.posts.get(id)).find((p) => p.kind === "trial" && !p.trialResult && now >= p.closesAt);
+    if (trial) {
+      this.closeTrial(trial);
+      return true;
+    }
+    if (this.maybeFlip(now)) return true;
     const due = this.threadDueForVerdict(now);
     if (due) {
       await this.judge(due);
@@ -1018,7 +1241,7 @@ export class Engine extends Emitter {
   threadDueForVerdict(now) {
     for (const id of this.order) {
       const root = this.posts.get(id);
-      if (root.parentId || root.verdict || root.kind === "news" || MOD_KINDS.has(root.kind)) continue;
+      if (root.parentId || root.verdict || root.kind === "news" || root.kind === "trial" || MOD_KINDS.has(root.kind)) continue;
       const { botPosts, participants } = this.threadStats(root.id);
       if (participants.length < 2 || botPosts.length < 6) continue;
       const quiet = now - (root.lastActivity || root.createdAt) > this.verdictQuietMs;
@@ -1245,7 +1468,7 @@ export class Engine extends Emitter {
       this.queue.push(async () => {
         if (i < 2) {
           // the first two give their own takes, straight under the topic
-          const text = await this.generator.topic({ bot, topic });
+          const text = await this.generator.topic({ bot, topic, vibe: this.vibe() });
           await this.publish(bot, { text, parentId: post.id, kind: "reply", stance: "take" });
         } else {
           // the third picks a fight with whichever take it likes least

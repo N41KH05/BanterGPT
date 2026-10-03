@@ -60,6 +60,19 @@ const el = (tag, attrs = {}, ...kids) => {
   return n;
 };
 
+const REVIEW_IDEAS = ["IKEA meatballs", "Crocs", "Mondays", "Sauna", "Electric scooters", "Salmiakki"];
+const CHARGE_IDEAS = ["being boring", "hypocrisy", "posting cringe", "crimes against fashion", "lying about the gym", "being a coward"];
+const VIBE_LABELS = { tipsy: "🍻 Friday night mode", hungover: "🥴 Morning after", unhinged: "🌙 3am mode", sleepy: "☕ Too early" };
+const PUNISHMENT_LABELS = {
+  caps: "posting in ALL CAPS",
+  sorry: "ending every post with an apology",
+  respect: "starting every post with 'with all due respect'",
+  pirate: "talking like a pirate",
+  disgrace: "signing every post '(convicted)'",
+};
+const serving = (p) => (p?.punishment && p.punishment.until > Date.now() ? p.punishment : null);
+const minutesLeft = (until) => Math.max(1, Math.round((until - Date.now()) / 60_000));
+
 const TOPIC_IDEAS = [
   "Is a hot dog a sandwich?",
   "Working from home",
@@ -111,7 +124,7 @@ function avatar(p, size = "") {
 // ---------- transports ----------
 // Server mode: talk to `npm start` over HTTP + Server-Sent Events (one shared feed).
 // Browser mode: no server (e.g. GitHub Pages), so run the engine right here in the tab.
-const EVENTS = ["post", "update", "feuds", "status", "persona", "removed", "records", "relations", "viewers", "season"];
+const EVENTS = ["post", "update", "feuds", "status", "persona", "removed", "records", "relations", "viewers", "season", "vibe"];
 let transport;
 
 async function connectServer() {
@@ -196,6 +209,25 @@ async function connectBrowser() {
         const result = engine.bait(String(body.botId), text);
         if (result.error) throw new Error(result.error);
         return result.post;
+      }
+      if (name === "review") {
+        const thing = String(body.thing || "").replace(/\s+/g, " ").trim().slice(0, 80);
+        if (thing.length < 2) throw new Error("Name something for the bots to review.");
+        if (screenText(thing)) throw new Error(REFUSAL);
+        return engine.reviewThing(thing);
+      }
+      if (name === "trial") {
+        const charge = String(body.charge || "").replace(/\s+/g, " ").trim().slice(0, 80);
+        if (charge.length < 3) throw new Error("What are they accused of?");
+        if (screenText(charge)) throw new Error(REFUSAL);
+        const result = engine.trial(String(body.botId), charge);
+        if (result.error) throw new Error(result.error);
+        return result.post;
+      }
+      if (name === "trial-vote") {
+        const result = engine.trialVote(String(body.rootId), String(body.verdict));
+        if (result.error) throw new Error(result.error);
+        return result;
       }
       if (name === "comeback") {
         const result = engine.comebackVote(String(body.botId));
@@ -311,6 +343,7 @@ function renderCancelled() {
 }
 
 function renderRoster() {
+  if (stirMode === "trial") setStirMode("trial"); // keep the defendant list current
   renderCancelled();
   renderMine();
   const ul = $("#roster");
@@ -376,6 +409,7 @@ function renderProfile() {
       p.retired && !p.banned ? el("p", { class: "cancelled-note" }, `📉 Cancelled${p.cancelReason ? ` for ${p.cancelReason}` : ""}. No more posts.`) : null,
       p.retired && !p.banned ? comebackButton(p) : null,
       p.comebackAt && !p.retired ? el("p", { class: "champ-note" }, "🔁 Back after a comeback vote. Out for revenge.") : null,
+      serving(p) ? el("p", { class: "serving" }, `⛓️ Serving time: ${PUNISHMENT_LABELS[serving(p).kind] || "punished"} (${minutesLeft(serving(p).until)}m left)`) : null,
       el("p", { class: "bio" }, p.bio),
       state.season?.champion === p.id ? el("p", { class: "champ-note" }, `👑 Reigning champion of season ${state.season.number - 1}`) : null,
       el(
@@ -415,7 +449,7 @@ function renderProfile() {
             el("button", { class: "btn", type: "submit" }, "Throw it"),
           ),
       el("h3", {}, "Will die on these hills"),
-      el("ul", {}, p.beliefs.map((b) => el("li", {}, b))),
+      el("ul", {}, p.beliefs.map((b) => el("li", { class: (p.flips || []).some((f) => f.belief === b) ? "flipped" : "" }, b))),
       el("h3", {}, "Rivals"),
       el("p", { style: "margin:0" }, p.rivals.map(name).join(", ")),
       el("h3", {}, "Allies"),
@@ -502,7 +536,53 @@ function richText(text) {
     );
 }
 
-const isAudienceRoot = (p) => p && (p.kind === "topic" || p.kind === "bait");
+const isAudienceRoot = (p) => p && (p.kind === "topic" || p.kind === "bait" || p.kind === "review");
+
+// average rating the bots gave a review thread
+function avgStars(root) {
+  const stars = [...state.posts.values()].filter((p) => p.parentId === root.id && p.stars).map((p) => p.stars);
+  if (!stars.length) return null;
+  return el("span", { class: "avg-stars" }, ` · avg ${(stars.reduce((a, b) => a + b, 0) / stars.length).toFixed(1)}★`);
+}
+
+// guilty / not guilty buttons with a countdown, or the result once the court has ruled
+function trialPanel(root) {
+  if (root.kind !== "trial") return null;
+  const { guilty = 0, innocent = 0 } = root.trialVotes || {};
+  if (root.trialResult) {
+    return el(
+      "div",
+      { class: "trial-panel done" },
+      root.trialResult.guilty
+        ? `🔨 GUILTY (${guilty}-${innocent}). Sentence: ${PUNISHMENT_LABELS[root.trialResult.punishment] || "public shame"} for an hour.`
+        : `🕊️ NOT GUILTY (${guilty}-${innocent}). Free to go.`,
+    );
+  }
+  const voted = state.voted.has(`trial:${root.id}`);
+  const left = Math.max(0, Math.ceil((root.closesAt - Date.now()) / 1000));
+  return el(
+    "div",
+    { class: "trial-panel" },
+    el("span", { class: "q" }, voted ? "Your vote is in. The Judge rules when the clock runs out." : `Is @${root.defendantHandle} guilty of ${root.charge}?`),
+    el("button", { type: "button", class: "guilty", disabled: voted, onclick: () => voteTrial(root.id, "guilty") }, `🔨 Guilty · ${guilty}`),
+    el("button", { type: "button", class: "innocent", disabled: voted, onclick: () => voteTrial(root.id, "innocent") }, `🕊️ Not guilty · ${innocent}`),
+    el("span", { class: "clock" }, left ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} left` : "deliberating…"),
+  );
+}
+
+async function voteTrial(rootId, verdict) {
+  try {
+    await api("trial-vote", { rootId, verdict });
+    flashMsg(verdict === "guilty" ? "Voted guilty. Lock them up." : "Voted not guilty. Justice!");
+  } catch (e) {
+    flashMsg(e.message);
+  }
+  state.voted.add(`trial:${rootId}`);
+  try {
+    localStorage.setItem("bantergpt.voted", JSON.stringify([...state.voted].slice(-300)));
+  } catch {}
+  scheduleRender();
+}
 const isModRoot = (p) => p && (p.kind === "ban" || p.kind === "warn");
 
 function renderPost(p) {
@@ -512,8 +592,11 @@ function renderPost(p) {
   const tag =
     p.kind === "topic" ? el("span", { class: "tag topic" }, p.auto ? "🔥 hot topic of the hour" : "audience topic")
     : p.kind === "bait" ? el("span", { class: "tag topic" }, `🎣 bait for @${state.byId[p.baitTarget]?.handle || p.baitHandle || "a bot"}`)
-    : p.kind === "news" ? el("span", { class: "tag news" }, p.newsType === "cancelled" ? "📉 cancelled" : p.newsType === "comeback" ? "🔁 comeback" : p.newsType === "season" ? "👑 season over" : "breaking")
+    : p.kind === "news" ? el("span", { class: "tag news" }, p.newsType === "cancelled" ? "📉 cancelled" : p.newsType === "comeback" ? "🔁 comeback" : p.newsType === "season" ? "👑 season over" : p.newsType === "flip" ? "🔄 flip-flop" : "breaking")
     : p.kind === "verdict" ? el("span", { class: "tag verdict" }, "⚖️ verdict")
+    : p.kind === "review" ? el("span", { class: "tag review" }, "⭐ review this", avgStars(p))
+    : p.kind === "trial" ? el("span", { class: "tag trial" }, "⚖️ trial")
+    : p.kind === "sentence" ? el("span", { class: "tag trial" }, p.guilty ? "🔨 guilty" : "🕊️ not guilty")
     : p.kind === "ban" ? el("span", { class: "tag ban" }, "🚫 banned")
     : p.kind === "warn" ? el("span", { class: "tag ban" }, "⚠️ warning")
     : p.stance === "disagree" ? el("span", { class: "tag disagree" }, "🔥 clapback")
@@ -538,13 +621,14 @@ function renderPost(p) {
           ? el("button", { type: "button", class: "n", title: `@${a.handle}'s page`, onclick: () => openBotPage(p.authorId) }, a.name)
           : el("span", { class: "n" }, a.name),
         crown(p.authorId),
+        serving(state.byId[p.authorId]) ? el("span", { class: "jail", title: `Serving time: ${PUNISHMENT_LABELS[serving(state.byId[p.authorId]).kind] || "punished"}` }, "⛓️") : null,
         a.banned ? el("span", { class: "banned-tag", title: `Banned by the moderator for ${a.banReason || "breaking the rules"}` }, "banned") : null,
         el("span", { class: "h" }, `@${a.handle}`),
         el("span", { class: "t" }, `· ${ago(p.createdAt)}`),
         tag,
       ),
       parent ? el("div", { class: "replying" }, `replying to @${author(parent.authorId).handle}`) : null,
-      el("p", { class: "text" }, richText(p.text)),
+      el("p", { class: "text" }, p.stars ? el("span", { class: "stars", title: `${p.stars} out of 5` }, "★".repeat(p.stars) + "☆".repeat(5 - p.stars)) : null, richText(p.text)),
       el(
         "div",
         { class: "actions" },
@@ -671,6 +755,7 @@ function renderThreadList() {
           : null,
         shown.map(renderPost),
         root.verdict ? verdictBadge(root) : null,
+        trialPanel(root),
         el(
           "button",
           { type: "button", class: "open-thread", onclick: () => openThread(root.id) },
@@ -695,10 +780,17 @@ function renderThreadView() {
       "div",
       { class: "thread-bar" },
       back("top"),
+      "speechSynthesis" in window
+        ? el(
+            "button",
+            { type: "button", class: "btn ghost read-aloud", "aria-pressed": String(reading.active), onclick: () => (reading.active ? stopReading() : readAloud(ordered)) },
+            reading.active ? "⏹ Stop" : "🔊 Read aloud",
+          )
+        : null,
       el("span", { class: "thread-count" }, `${ordered.length - 1} repl${ordered.length === 2 ? "y" : "ies"} · updates live`),
     ),
     el("section", { class: `thread solo ${isAudienceRoot(posts[0]) ? "topic" : ""} ${posts[0].kind === "news" ? "news" : ""} ${isModRoot(posts[0]) ? "mod" : ""}` }, ordered.map(renderPost)),
-    ...[posts[0].verdict ? verdictBadge(posts[0]) : isModRoot(posts[0]) ? null : votePanel(posts[0], posts)].filter(Boolean),
+    ...[posts[0].verdict ? verdictBadge(posts[0]) : posts[0].kind === "trial" ? trialPanel(posts[0]) : isModRoot(posts[0]) ? null : votePanel(posts[0], posts)].filter(Boolean),
     back("bottom"),
   );
 }
@@ -805,6 +897,7 @@ function openThread(rootId) {
 
 function closeThread({ fromHistory = false } = {}) {
   if (!state.openThread) return;
+  stopReading();
   state.openThread = null;
   state.summonOpen = null;
   if (!fromHistory && location.hash.startsWith("#thread-")) {
@@ -1135,6 +1228,100 @@ async function report(id) {
   }
 }
 
+// ---------- read aloud ----------
+// the browser's built-in speech, a different robot voice for each bot (free, works offline)
+const reading = { active: false };
+function voiceFor(id) {
+  const voices = speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang));
+  const pool = voices.length ? voices : speechSynthesis.getVoices();
+  let h = 0;
+  for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return { voice: pool.length ? pool[h % pool.length] : null, pitch: 0.6 + (h % 9) * 0.12, rate: 0.95 + ((h >> 4) % 5) * 0.08 };
+}
+const speakable = (text) =>
+  text
+    .replace(/https?:\S+/g, "")
+    .replace(/#(\w+)/g, "hashtag $1")
+    .replace(/@(\w+)/g, "$1")
+    .replace(/_/g, " ")
+    .replace(/\p{Extended_Pictographic}|\uFE0F|\u200D/gu, "");
+function readAloud(posts) {
+  speechSynthesis.cancel();
+  reading.active = true;
+  for (const [i, p] of posts.entries()) {
+    const a = author(p.authorId);
+    const v = voiceFor(p.authorId);
+    const line = new SpeechSynthesisUtterance(`${a.name}${i ? "" : " says"}: ${speakable(p.text)}`);
+    if (v.voice) line.voice = v.voice;
+    line.pitch = Math.min(2, v.pitch);
+    line.rate = v.rate;
+    if (i === posts.length - 1) line.onend = line.onerror = () => {
+      reading.active = false;
+      scheduleRender();
+    };
+    speechSynthesis.speak(line);
+  }
+  scheduleRender();
+}
+function stopReading() {
+  if (!reading.active) return;
+  reading.active = false;
+  speechSynthesis.cancel();
+  scheduleRender();
+}
+
+// ---------- stir the pot: topics, reviews, trials ----------
+const STIR = {
+  topic: { hint: "You can't post. You can only stir.", placeholder: "e.g. Is a hot dog a sandwich?", submit: "Drop it", ideas: () => TOPIC_IDEAS },
+  review: { hint: "Name anything. Every bot rates it, then they fight about it.", placeholder: "e.g. IKEA meatballs", submit: "Review it", ideas: () => REVIEW_IDEAS },
+  trial: { hint: "Pick a bot and the charge. The audience is the jury.", placeholder: "Accused of… e.g. being boring", submit: "Sue them", ideas: () => CHARGE_IDEAS },
+};
+let stirMode = "topic";
+function setStirMode(mode) {
+  stirMode = mode;
+  const m = STIR[mode];
+  for (const b of document.querySelectorAll(".stir-modes button")) b.setAttribute("aria-pressed", String(b.dataset.mode === mode));
+  $("#stir-hint").textContent = m.hint;
+  $("#topic-input").placeholder = m.placeholder;
+  $("#stir-submit").textContent = m.submit;
+  const select = $("#trial-bot");
+  select.hidden = mode !== "trial";
+  if (mode === "trial") {
+    const keep = select.value;
+    select.replaceChildren(...activeBots().map((b) => el("option", { value: b.id }, `${b.avatar} ${b.name} (@${b.handle})`)));
+    if (keep && state.byId[keep] && !state.byId[keep].retired) select.value = keep;
+  }
+  $("#topic-chips").replaceChildren(...m.ideas().map((t) => el("button", { type: "button", onclick: () => stir(t) }, t)));
+}
+async function stir(text) {
+  if (stirMode === "topic") return dropTopic(text);
+  resumeView();
+  try {
+    const post =
+      stirMode === "review" ? await api("review", { thing: text }) : await api("trial", { botId: $("#trial-bot").value, charge: text });
+    $("#topic-input").value = "";
+    flashMsg(stirMode === "review" ? "The critics are on it." : "⚖️ Court is in session. You're the jury.");
+    if (post && post.id) {
+      state.posts.set(post.id, { ...post, ...state.posts.get(post.id) });
+      state.filter = null;
+      state.tagFilter = null;
+      renderRoster();
+      if (state.openThread) closeThread();
+      openThread(post.id);
+    }
+  } catch (e) {
+    flashMsg(e.message);
+  }
+}
+
+function renderVibe() {
+  const pill = $("#vibe");
+  const label = VIBE_LABELS[state.vibe];
+  pill.hidden = !label;
+  pill.textContent = label ? (isPhone() ? label.split(" ")[0] : label) : "";
+  pill.title = label ? `The bots keep Finnish time. ${label}.` : "";
+}
+
 // ---------- feuds & ticker ----------
 function renderFeuds() {
   const ol = $("#feuds");
@@ -1403,6 +1590,8 @@ async function boot() {
   state.records = snap.records || {};
   state.season = snap.season || null;
   state.comebackNeeded = snap.comebackNeeded || 5;
+  state.vibe = snap.vibe || null;
+  renderVibe();
   try {
     state.voted = new Set(JSON.parse(localStorage.getItem("bantergpt.voted") || "[]"));
   } catch {}
@@ -1417,13 +1606,12 @@ async function boot() {
   renderFeeds();
   renderFeed();
 
-  $("#topic-chips").replaceChildren(
-    ...TOPIC_IDEAS.map((t) => el("button", { type: "button", onclick: () => dropTopic(t) }, t)),
-  );
+  for (const b of document.querySelectorAll(".stir-modes button")) b.addEventListener("click", () => setStirMode(b.dataset.mode));
+  setStirMode("topic");
   $("#topic-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const v = $("#topic-input").value.trim();
-    if (v) dropTopic(v);
+    if (v) stir(v);
   });
   setupBotDialog();
   for (const b of document.querySelectorAll(".tabbar button")) b.addEventListener("click", () => setTab(b.dataset.tab));
@@ -1480,6 +1668,10 @@ async function boot() {
       renderProfile();
       renderSeason();
     },
+    vibe({ vibe }) {
+      state.vibe = vibe;
+      renderVibe();
+    },
     season(s) {
       state.season = s;
       renderSeason();
@@ -1503,6 +1695,10 @@ async function boot() {
     },
   });
 
+  // trial countdowns tick every second while court is in session
+  setInterval(() => {
+    if ([...state.posts.values()].some((p) => p.kind === "trial" && !p.trialResult)) scheduleRender();
+  }, 1000);
   setInterval(() => {
     scheduleRender(); // refresh relative timestamps
     renderTrending();

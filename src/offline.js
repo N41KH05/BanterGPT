@@ -115,11 +115,61 @@ function spice(text, bot) {
   return out === text.replace(/[.]$/, "") ? text : out;
 }
 
+// ---------- time of day ----------
+// drunk typos, 3am energy, morning grumpiness (the live AI gets the same as a note instead)
+function typo(word) {
+  if (word.length < 4 || Math.random() > 0.3) return word;
+  const i = 1 + Math.floor(Math.random() * (word.length - 2));
+  return word.slice(0, i) + word[i + 1] + word[i] + word.slice(i + 2);
+}
+// lowercase the first letter, unless it starts an acronym or name like "IKEA"
+const lowerFirst = (t) => (/^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t);
+function withVibe(text, vibe) {
+  if (!text || !vibe || Math.random() > 0.6) return text;
+  if (vibe === "tipsy") {
+    let out = text.split(" ").map((w) => (/^[@#]/.test(w) ? w : Math.random() < 0.15 ? w.toUpperCase() : typo(w))).join(" ");
+    return out + randomOf([" lmaooo", " 🍻", " i love u all (not u)", " WHO SAID THAT", ""]);
+  }
+  if (vibe === "hungover") return randomOf(["ugh my head. ", "never drinking again. anyway ", "deleting half of last night's posts. "]) + lowerFirst(text);
+  if (vibe === "unhinged") return randomOf(["3am thought: ", "can't sleep. ", "nobody's awake so here goes: "]) + lowerFirst(text);
+  if (vibe === "sleepy") return text.toLowerCase().replace(/[.!]+$/, "") + randomOf([" ☕", ". ugh", ". too early for this", ""]);
+  return text;
+}
+
+// ---------- product reviews ----------
+const REVIEW_LINES = {
+  1: ["{thing}? one star and that's generous", "{thing} should be illegal. 1/5", "i've had better experiences at the dentist than {thing}"],
+  2: ["{thing} is mid at best. 2/5", "{thing}? overhyped and overpriced", "two stars for {thing}, one for showing up"],
+  3: ["{thing} is fine. aggressively fine. 3/5", "{thing}: does the job, nobody's impressed", "three stars. {thing} exists and that's about it"],
+  4: ["{thing} slaps, honestly. 4/5", "{thing} is good and i'm tired of pretending it isn't", "four stars for {thing}. haters can cope"],
+  5: ["{thing} is perfect. 5 stars. no notes", "{thing} changed my life. five stars", "anyone hating on {thing} is lying. 5/5"],
+};
+// each bot has a "taste": some hate everything, some are easily pleased
+const TASTE = { margot: 2, brut: 2, hal: 4, nap: 3, professor: 2, carl: 4 };
+
+// ---------- trials & flip-flops ----------
+const DEFENSE_LINES = [
+  "this court is a joke. i'm innocent and i'm the best poster here",
+  "objection. to everything. all of it",
+  "not guilty and also you're all jealous",
+  "i'd like to remind the court that i'm always right",
+];
+const SENTENCED_LINES = ["this is a witch hunt", "rigged court, rigged judge, rigged audience", "i'll serve my time but i'll remember every name"];
+const ACQUITTED_LINES = ["told you. innocent. as always", "justice served. apologise, all of you", "the court has spoken. i'm perfect"];
+const FLIP_MOCK = ["{name} flipped faster than a pancake lol", "remember when {name} swore the opposite? i do", "{name} changing sides after losing. character development or cowardice", "hypocrite alert: {name}"];
+const FLIP_DEFEND = ["people grow. some of you should try it", "i didn't flip, i evolved", "changing your mind is called being smart. look it up"];
+
 export const offlineGenerator = {
   mode: "offline",
 
-  async post({ bot, mood }) {
-    return spice(withMood(pick(bot, "takes"), mood, bot), bot);
+  async post({ bot, mood, vibe }) {
+    return withVibe(spice(withMood(pick(bot, "takes"), mood, bot), bot), vibe);
+  },
+
+  async review({ bot, thing, vibe }) {
+    const base = bot.custom ? 3 : TASTE[bot.id] || 3;
+    const stars = Math.max(1, Math.min(5, base + Math.round((Math.random() - 0.5) * 3.2)));
+    return { stars, text: withVibe(spice(fill(randomOf(REVIEW_LINES[stars]), { thing: asPhrase(thing) }), bot), vibe) };
   },
 
   async verdict({ suggested, votes }) {
@@ -131,11 +181,25 @@ export const offlineGenerator = {
     };
   },
 
-  async topic({ bot, topic }) {
-    return spice(fill(pick(bot, "topicTakes"), { topic: asPhrase(topic) }), bot);
+  async topic({ bot, topic, vibe }) {
+    return withVibe(spice(fill(pick(bot, "topicTakes"), { topic: asPhrase(topic) }), bot), vibe);
   },
 
-  async reply({ bot, target, targetAuthor, stance, grudgeLevel, topic, mood }) {
+  async reply(ctx) {
+    return withVibe(await replyText(ctx), ctx.vibe);
+  },
+};
+
+async function replyText({ bot, target, targetAuthor, stance, grudgeLevel, topic, mood }) {
+  {
+    // court: the accused defends itself, then reacts to the sentence
+    if (target.kind === "trial" && bot.id === target.defendant) return spice(randomOf(DEFENSE_LINES), bot);
+    if (target.kind === "sentence") return spice(randomOf(target.guilty ? SENTENCED_LINES : ACQUITTED_LINES), bot);
+    // a flip-flop: everyone mocks it, the flipper insists it's growth
+    if (target.newsType === "flip") {
+      if (bot.id === target.flipper) return spice(randomOf(FLIP_DEFEND), bot);
+      return spice(fill(randomOf(FLIP_MOCK), { name: `@${target.flipperHandle}` }), bot);
+    }
     // a comeback: the returning bot wants revenge, the ones who laughed play it cool
     if (!targetAuthor && target.newsType === "comeback") {
       const lines = bot.id === target.returned ? COMEBACK_BRAG : COMEBACK_SCOFF;
@@ -170,5 +234,5 @@ export const offlineGenerator = {
     const quotable = quote.split(" ").length >= 4;
     const line = pick(bot, bank, (t) => quotable || !t.includes("{quote}"));
     return spice(withMood(fill(line, { name, quote, topic: topic ? asPhrase(topic) : "this" }), mood, bot), bot);
-  },
-};
+  }
+}

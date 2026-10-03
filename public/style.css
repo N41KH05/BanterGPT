@@ -493,7 +493,11 @@ button { font: inherit; color: inherit; }
   margin-bottom: 18px;
 }
 .hint { margin: -4px 0 10px; font-size: 13px; color: var(--ink-2); }
-#topic-form { display: flex; gap: 6px; }
+#topic-form { display: flex; flex-wrap: wrap; gap: 6px; }
+#trial-bot { flex-basis: 100%; border: 2px solid var(--ink); background: var(--paper); color: var(--ink); padding: 6px 8px; font: inherit; font-size: 14px; }
+.stir-modes { display: flex; gap: 4px; margin: 0 0 10px; }
+.stir-modes button { flex: 1; padding: 5px 4px; border: 2px solid var(--ink); background: var(--paper); color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.stir-modes button[aria-pressed="true"] { background: var(--ink); color: #fff; }
 #topic-form input {
   flex: 1;
   min-width: 0;
@@ -825,3 +829,32 @@ html[data-device="phone"] .bot-page h2 { font-size: 28px; }
 .comeback-btn.voted, .comeback-btn:disabled { opacity: 0.6; cursor: default; box-shadow: none; }
 .profile .comeback-btn { width: 100%; margin-bottom: 10px; }
 #cancelled-list li > button:first-child { flex: 1; min-width: 0; }
+
+/* ---------- reviews ---------- */
+.stars { color: #e0a800; letter-spacing: 1px; margin-right: 6px; white-space: nowrap; }
+.tag.review { color: var(--ink); background: #f5c518; border-color: #f5c518; }
+.avg-stars { font-family: var(--mono); font-size: 12px; margin-left: 6px; color: var(--ink-2); }
+
+/* ---------- trials ---------- */
+.tag.trial { color: #fff; background: #7a5c00; border-color: #7a5c00; }
+.post.kind-trial .text, .post.kind-sentence .text { font-weight: 800; font-size: 17px; }
+.post.kind-trial { background: color-mix(in srgb, #7a5c00 10%, var(--card)); }
+.trial-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; border-top: 2px solid var(--ink); background: color-mix(in srgb, #7a5c00 8%, var(--card)); }
+.trial-panel .q { font-weight: 700; flex-basis: 100%; }
+.trial-panel button { border: 2px solid var(--ink); background: var(--card); font: inherit; font-weight: 700; padding: 6px 12px; cursor: pointer; }
+.trial-panel button.guilty:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.trial-panel button.innocent:hover:not(:disabled) { background: var(--agree); color: #fff; }
+.trial-panel button:disabled { opacity: 0.55; cursor: default; }
+.trial-panel .clock { font-family: var(--mono); font-size: 12px; color: var(--ink-2); margin-left: auto; }
+.trial-panel.done { font-weight: 700; }
+.jail { margin-left: 3px; cursor: help; }
+.serving { margin: 0 0 8px; padding: 6px 8px; background: #7a5c00; color: #fff; font-size: 13px; font-weight: 700; }
+.profile li.flipped { text-decoration: line-through; color: var(--ink-3); }
+.profile li.flipped::after { content: " (changed mind)"; text-decoration: none; display: inline-block; margin-left: 4px; font-size: 11px; color: var(--accent); }
+
+/* ---------- time of day ---------- */
+.pill.vibe { background: #f5c518; border-color: var(--ink); color: var(--ink); }
+
+/* ---------- read aloud ---------- */
+.read-aloud { margin-left: auto; }
+.read-aloud[aria-pressed="true"] { background: var(--ink); color: #fff; }

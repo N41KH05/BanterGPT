@@ -33,6 +33,7 @@ function systemPrompt(bot) {
     `Who you are and how you talk: ${bot.voice}`,
     `Opinions you will never back down on: ${bot.beliefs.join("; ")}.`,
     `People you can't stand: ${names(bot.rivals)}. People you usually side with: ${names(bot.allies)}.`,
+    ...(bot.flips?.length ? [`You publicly changed your mind and NO LONGER believe: ${bot.flips.map((f) => `"${f.belief}"`).join(", ")}. You now argue the opposite and get defensive when called a hypocrite.`] : []),
     "",
     "How to post:",
     `- SHORT. Usually 5 to 20 words, never more than ${MAX_CHARS} characters. One or two sentences.`,
@@ -46,6 +47,14 @@ function systemPrompt(bot) {
     "- Output only the post text. No quotes around it, no name prefix, no explanation.",
   ].join("\n");
 }
+
+const VIBE_NOTES = {
+  tipsy: "Right now it's Friday or Saturday night and you've had a few drinks: a couple of typos, a random ALL CAPS word, way too emotional.",
+  hungover: "Right now it's the weekend morning after a big night: hungover, a bit embarrassed about last night's posts.",
+  unhinged: "Right now it's the middle of the night: unhinged 3am energy, weird thoughts, oversharing.",
+  sleepy: "Right now it's early morning: groggy, grumpy, no coffee yet. Short and irritable.",
+};
+const vibeLine = (vibe) => (VIBE_NOTES[vibe] ? `\n${VIBE_NOTES[vibe]}` : "");
 
 function formatFeed(posts) {
   return posts
@@ -259,22 +268,42 @@ export const llmGenerator = {
   model: MODEL,
 
   async post(ctx) {
-    const { bot, recent, memory, feuds = [], mood } = ctx;
+    const { bot, recent, memory, feuds = [], mood, vibe } = ctx;
     const content = [
       "What people are posting right now:",
       formatFeed(recent) || "(quiet right now)",
       memory.length ? `\nRecent stuff that happened to you here:\n- ${memory.join("\n- ")}` : "",
       feuds.length ? `\nYour running feuds:\n- ${feuds.join("\n- ")}` : "",
       mood ? `\nYour mood right now: ${mood.note}` : "",
+      vibeLine(vibe),
       "\nPost something new. Either react to something above (no @-reply needed, just your take) or drop a short opinion of your own. Don't repeat yourself.",
     ].join("\n");
     return withFallback(() => callPost(bot, content), () => offlineGenerator.post(ctx), ctx.bot);
   },
 
   async topic(ctx) {
-    const { bot, topic } = ctx;
-    const content = `Someone just asked the feed: "${topic}"\nGive your blunt answer to exactly that question or topic, in your own voice. Take a clear side. If it's about a real person, talk about the idea, not the person.`;
+    const { bot, topic, vibe } = ctx;
+    const content = `Someone just asked the feed: "${topic}"\nGive your blunt answer to exactly that question or topic, in your own voice. Take a clear side. If it's about a real person, talk about the idea, not the person.${vibeLine(vibe)}`;
     return withFallback(() => callPost(bot, content), () => offlineGenerator.topic(ctx), ctx.bot);
+  },
+
+  async review(ctx) {
+    const { bot, thing, vibe } = ctx;
+    const content = [
+      `Someone asked the feed to review: "${thing}"`,
+      "Give it a star rating from 1 to 5 that fits your personality and a one-line review in your own voice. Be opinionated: extreme ratings are more fun than 3s.",
+      "If it's a real person, review the idea or the thing, not the person.",
+      vibeLine(vibe),
+      'Answer in exactly this format: STARS: <1-5> | <review>',
+    ].join("\n");
+    try {
+      const answer = await callPost(bot, content);
+      const m = answer.match(/STARS:\s*([1-5])\s*\|\s*(.+)/is);
+      if (!m) throw new Error("bad review format");
+      return { stars: Number(m[1]), text: tidy(m[2]) };
+    } catch {
+      return offlineGenerator.review(ctx);
+    }
   },
 
   async verdict(ctx) {
@@ -312,7 +341,32 @@ export const llmGenerator = {
   },
 
   async reply(ctx) {
-    const { bot, target, targetAuthor, stance, thread, memory, grudgeLevel, topic, feuds = [], mood: botMood } = ctx;
+    const { bot, target, targetAuthor, stance, thread, memory, grudgeLevel, topic, feuds = [], mood: botMood, vibe } = ctx;
+    const special = (situation) =>
+      withFallback(
+        () => callPost(bot, [situation, memory.length ? `\nRecent stuff that happened to you here:\n- ${memory.join("\n- ")}` : "", vibeLine(vibe)].filter(Boolean).join("\n")),
+        () => offlineGenerator.reply(ctx),
+        bot,
+      );
+    if (target.kind === "trial" && bot.id === target.defendant) {
+      return special(`You're on trial on BanterGPT, accused of ${target.charge}. The Judge just opened court: "${target.text}"\nDefend yourself to the court: deny it, deflect, attack your accusers. One or two sentences.`);
+    }
+    if (target.kind === "sentence") {
+      return special(target.guilty ? `You were just found GUILTY. The Judge: "${target.text}"\nReact: outraged, call it rigged, maybe threaten an appeal.` : `You were just found NOT GUILTY. The Judge: "${target.text}"\nGloat.`);
+    }
+    if (target.witnessFor) {
+      return special(`@${target.defendantHandle} is on trial for ${target.trialCharge}. They just said in their defence: "${target.text}"\nYou're a witness ${target.witnessFor === "against" ? "for the prosecution: testify against them, bring up their worst behaviour" : "for the defence: back them up (reluctantly, in your own style)"}. Address @${target.defendantHandle}.`);
+    }
+    if (target.newsType === "flip") {
+      return special(
+        bot.id === target.flipper
+          ? `The feed just reported that you changed your mind and no longer believe "${target.belief}". Defend it: you didn't flip, you evolved.`
+          : `Breaking news: "${target.text}"\nMock @${target.flipperHandle} for flip-flopping. Call out the hypocrisy.`,
+      );
+    }
+    if (target.stars && targetAuthor) {
+      return special(`@${targetAuthor.handle} gave it ${target.stars} stars: "${target.text}"\nYou completely disagree with that rating. Tear their review apart and say what it really deserves.`);
+    }
     if (!targetAuthor && target.newsType === "comeback") {
       const back = bot.id === target.returned;
       const content = [
@@ -366,6 +420,7 @@ export const llmGenerator = {
       memory.length ? `\nRecent stuff that happened to you here:\n- ${memory.join("\n- ")}` : "",
       feuds.length ? `\nYour running feuds (bring up old beef if it fits):\n- ${feuds.join("\n- ")}` : "",
       botMood ? `\nYour mood right now: ${botMood.note}` : "",
+      vibeLine(vibe),
       `\nReply to ${who}'s post: "${target.text}"`,
       `${mood} Respond to what they actually said.`,
     ]
