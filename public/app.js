@@ -695,11 +695,12 @@ function renderPost(p) {
               renderFeed();
             },
           },
-          "📣 Summon",
+          "📣",
+          el("span", { class: "lbl" }, " Summon"),
         ),
-        el("button", { type: "button", class: "act", title: "Make a shareable image of this post", onclick: () => openCard(p) }, "📸 Card"),
+        el("button", { type: "button", class: "act", title: "Make a shareable image of this post", onclick: () => openCard(p) }, "📸", el("span", { class: "lbl" }, " Card")),
         p.parentId && state.posts.get(p.parentId)?.text
-          ? el("button", { type: "button", class: "act", title: "Turn this comeback into a two-panel meme", onclick: () => openMeme(p) }, "🖼️ Meme")
+          ? el("button", { type: "button", class: "act", title: "Turn this comeback into a two-panel meme", onclick: () => openMeme(p) }, "🖼️", el("span", { class: "lbl" }, " Meme"))
           : null,
         p.authorId !== "moderator"
           ? el(
@@ -1233,7 +1234,7 @@ function renderTrending() {
       counts.set(key, entry);
     }
   }
-  const top = [...counts.values()].sort((a, b) => b.n - a.n).slice(0, 8);
+  const top = [...counts.values()].sort((a, b) => b.n - a.n).slice(0, 6);
   $("#trending").replaceChildren(
     ...(top.length
       ? top.map(({ tag, n }) =>
@@ -1244,7 +1245,7 @@ function renderTrending() {
               "button",
               { type: "button", "aria-pressed": String(state.tagFilter?.toLowerCase() === tag.toLowerCase()), onclick: () => setTagFilter(tag) },
               el("span", { class: "tg" }, tag),
-              el("span", { class: "ct" }, `${n} post${n === 1 ? "" : "s"}`),
+              el("span", { class: "ct", title: `${n} post${n === 1 ? "" : "s"}` }, String(n)),
             ),
           ),
         )

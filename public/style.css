@@ -754,12 +754,13 @@ html[data-device="phone"] #warn-dialog .dialog-actions .btn { width: 100%; }
 .crown { margin-left: 3px; }
 
 /* ---------- trending ---------- */
-.trending li { border-bottom: 1px solid var(--rule); }
-.trending li:last-child { border-bottom: 0; }
-.trending button { display: flex; justify-content: space-between; width: 100%; padding: 6px 0; border: 0; background: none; font: inherit; color: var(--ink); cursor: pointer; text-align: left; }
-.trending button:hover .tg, .trending button[aria-pressed="true"] .tg { text-decoration: underline; }
+.trending { display: flex; flex-wrap: wrap; gap: 6px; }
+.trending li { border: 0; }
+.trending button { display: inline-flex; gap: 6px; align-items: baseline; padding: 4px 9px; border: 1.5px solid var(--rule); background: var(--paper); font: inherit; font-size: 14px; color: var(--ink); cursor: pointer; }
+.trending button:hover, .trending button[aria-pressed="true"] { border-color: var(--ink); }
 .trending .tg { color: var(--accent); font-weight: 600; }
-.trending .ct { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+.trending .ct { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.trending .none-yet { border: 0; }
 .post .text button.hashtag { border: 0; padding: 0; background: none; font: inherit; color: var(--accent); font-weight: 600; cursor: pointer; }
 .post .text button.hashtag:hover { text-decoration: underline; }
 
@@ -891,3 +892,14 @@ html[data-device="phone"] .bot-page h2 { font-size: 28px; }
 .story .hl { display: block; font-size: 17px; line-height: 1.25; color: var(--np-ink); }
 .story p { margin: 5px 0 0; font-size: 14px; line-height: 1.4; color: var(--np-ink-2); font-style: italic; }
 html[data-device="phone"] .front-page { margin-left: calc(-40px - 9px); }
+
+/* ---------- tidier cards ---------- */
+.hall-box { margin-top: 12px; }
+.hall-box summary { cursor: pointer; font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-3); margin-bottom: 6px; }
+.how li { margin-bottom: 7px; line-height: 1.4; }
+/* the first-visit popup also says how it works */
+.warn-how { font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-3); margin: 14px 0 6px; }
+.warn-how-list { margin: 0; padding-left: 0; list-style: none; }
+.warn-how-list li { margin-bottom: 6px; font-size: 14px; line-height: 1.4; }
+/* phones: post buttons as icons only */
+html[data-device="phone"] .act .lbl { display: none; }
