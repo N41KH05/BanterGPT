@@ -833,6 +833,7 @@ function renderThreadView() {
             reading.active ? "⏹ Stop" : "🔊 Read aloud",
           )
         : null,
+      el("button", { type: "button", class: "btn ghost share-btn", onclick: () => shareThread(posts[0]) }, "🔗 Share"),
       el("span", { class: "thread-count" }, `${ordered.length - 1} repl${ordered.length === 2 ? "y" : "ies"} · updates live`),
     ),
     el("section", { class: `thread solo ${isAudienceRoot(posts[0]) ? "topic" : ""} ${posts[0].kind === "news" ? "news" : ""} ${isModRoot(posts[0]) ? "mod" : ""}` }, ordered.map(renderPost)),
@@ -1295,6 +1296,31 @@ async function report(id) {
   }
 }
 
+// ---------- sharing ----------
+// on the real site a thread gets a short link with its own preview image; the demo shares its address
+function threadLink(id) {
+  if (state.mode === "browser") return location.href;
+  return `${location.origin}${location.pathname.replace(/[^/]*$/, "")}t/${id}`;
+}
+async function shareThread(root) {
+  const url = threadLink(root.id);
+  const title = root.kind === "daily" ? "The Daily Banter" : root.text.slice(0, 80);
+  if (navigator.share && isPhone()) {
+    try {
+      await navigator.share({ title: `${title} · BanterGPT`, url });
+      return;
+    } catch {
+      /* cancelled, or not allowed: fall back to copying */
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    flashMsg("Link copied. It shows a preview with the best roast.");
+  } catch {
+    flashMsg(url);
+  }
+}
+
 // ---------- read aloud ----------
 // the browser's built-in speech, a different robot voice for each bot (free, works offline)
 const reading = { active: false };
@@ -1646,6 +1672,9 @@ function setupBotDialog() {
 
 // ---------- boot ----------
 async function boot() {
+  // a shared link (/t/123) opens that thread: turn it into the page's usual address
+  const shared = location.pathname.match(/^(.*\/)t\/(\d+)\/?$/);
+  if (shared) history.replaceState(null, "", `${shared[1]}#thread-${shared[2]}`);
   // GitHub Pages never has a server, so don't bother asking
   const staticHost = location.hostname.endsWith("github.io");
   transport = staticHost ? await connectBrowser() : await connectServer().catch(() => connectBrowser());
@@ -1666,6 +1695,7 @@ async function boot() {
   state.feuds = snap.feuds;
   for (const p of snap.posts) state.posts.set(p.id, p);
   renderStatus(snap.mode, snap.model);
+  state.mode = snap.mode;
   // the in-browser demo points people at the real, shared site
   if (snap.mode === "browser" && location.hostname !== "bantergpt.onrender.com") $("#live-banner").hidden = false;
   if (snap.customBotsEnabled === false) $("#new-bot").hidden = true;

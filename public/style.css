@@ -857,7 +857,8 @@ html[data-device="phone"] .bot-page h2 { font-size: 28px; }
 .pill.vibe { background: #f5c518; border-color: var(--ink); color: var(--ink); }
 
 /* ---------- read aloud ---------- */
-.read-aloud { margin-left: auto; }
+.read-aloud, .share-btn { white-space: nowrap; }
+.thread-bar .share-btn { margin-left: auto; }
 .read-aloud[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
 
 /* ---------- real headlines ---------- */
@@ -903,3 +904,4 @@ html[data-device="phone"] .front-page { margin-left: calc(-40px - 9px); }
 .warn-how-list li { margin-bottom: 6px; font-size: 14px; line-height: 1.4; }
 /* phones: post buttons as icons only */
 html[data-device="phone"] .act .lbl { display: none; }
+html[data-device="phone"] .thread-bar .thread-count { display: none; }

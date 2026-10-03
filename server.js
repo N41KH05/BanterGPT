@@ -290,6 +290,77 @@ function limited(req, max = 20, windowMs = 60_000) {
   return list.length > max;
 }
 
+// ---------- shareable thread links ----------
+const og = await import("./src/og.js");
+const SITE_URL = (process.env.BANTER_SITE_URL || "").replace(/\/$/, "");
+const siteUrl = (req) => {
+  if (SITE_URL) return SITE_URL;
+  const proto = TRUST_PROXY ? String(req.headers["x-forwarded-proto"] || "http").split(",")[0].trim() : "http";
+  const host = String(req.headers.host || `localhost:${PORT}`).replace(/[^\w.:-]/g, "");
+  return `${proto}://${host}`;
+};
+// the thread's root and its best roast (most likes and cheers, clapbacks first)
+function shareInfo(id) {
+  const root = engine.posts.get(id);
+  if (!root || root.parentId) return null;
+  const replies = engine.order.map((pid) => engine.posts.get(pid)).filter((p) => p.rootId === id && p.id !== id);
+  const bots = replies.filter((p) => engine.author(p.authorId)?.voice);
+  const score = (p) => (p.likes || 0) + (p.cheers || 0) * 3 + (p.stance === "disagree" ? 0.5 : 0);
+  const best = bots.sort((a, b) => score(b) - score(a) || Number(a.id) - Number(b.id))[0] || null;
+  const tag = root.headline ? "real headline" : { topic: root.auto ? "hot topic" : "audience topic", review: "review", bait: "bait", trial: "trial", daily: "the daily banter", news: "breaking", ban: "banned", warn: "warning" }[root.kind] || "thread";
+  const title = root.kind === "daily" ? `The Daily Banter · ${root.edition?.date || ""}` : root.kind === "review" ? `Bots review: ${root.text}` : root.text;
+  return { root, best, replies: replies.length, tag, title };
+}
+const pngCache = new Map(); // "id:replies" -> png
+function threadImage(id) {
+  if (!og.previewsAvailable()) return null;
+  const info = shareInfo(id);
+  if (!info) return null;
+  const key = `${id}:${info.replies}:${info.best?.id || ""}`;
+  if (pngCache.has(key)) return pngCache.get(key);
+  const author = info.best && engine.author(info.best.authorId);
+  const png = og.renderPng(
+    og.threadPreviewSvg({
+      tag: info.tag,
+      title: info.title,
+      roast: info.best ? { handle: author.handle, label: info.best.stars ? "★".repeat(info.best.stars) : "roast of the thread", text: info.best.text } : null,
+      replies: info.replies,
+      site: (SITE_URL || "bantergpt.onrender.com").replace(/^https?:\/\//, ""),
+    }),
+  );
+  pngCache.set(key, png);
+  if (pngCache.size > 100) pngCache.delete(pngCache.keys().next().value);
+  return png;
+}
+const attr = (t) => String(t).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+async function sharePage(req, id) {
+  let html = await readFile(path.join(__dirname, "index.html"), "utf8");
+  // the page lives at /t/<id>, so relative links need to resolve from the site root
+  html = html.replace("<head>", '<head>\n    <base href="/" />');
+  const info = shareInfo(id);
+  if (!info) return html; // thread's gone: just the normal page
+  const base = siteUrl(req);
+  const author = info.best && engine.author(info.best.authorId);
+  const title = `${info.title.slice(0, 90)} · BanterGPT`;
+  const desc = info.best ? `@${author.handle}: ${info.best.text}`.slice(0, 200) : "AI bots arguing about it, live. Come watch.";
+  const image = `${base}/og/t/${id}.png?v=${info.replies}`;
+  const set = (attrName, key, value) => {
+    const re = new RegExp(`(<meta ${attrName}="${key}" content=")[^"]*(")`);
+    html = html.replace(re, `$1${attr(value)}$2`);
+  };
+  html = html.replace(/<title>[^<]*<\/title>/, `<title>${attr(title)}</title>`);
+  set("name", "description", desc);
+  set("property", "og:url", `${base}/t/${id}`);
+  set("property", "og:title", title);
+  set("property", "og:description", desc);
+  set("property", "og:image", image);
+  set("property", "og:image:alt", `${info.title}: ${desc}`);
+  set("name", "twitter:title", title);
+  set("name", "twitter:description", desc);
+  set("name", "twitter:image", image);
+  return html;
+}
+
 // ---------- routes ----------
 const server = http.createServer(async (req, res) => {
   let url;
@@ -540,6 +611,24 @@ const server = http.createServer(async (req, res) => {
         return json(res, p ? 200 : 404, p || { error: "Unknown post" });
       }
       return json(res, 404, { error: "Not found" });
+    }
+
+    // shareable thread links: the page, with link-preview tags for that thread
+    const shared = req.method === "GET" && url.pathname.match(/^\/t\/(\d+)\/?$/);
+    if (shared) {
+      const html = await sharePage(req, shared[1]);
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" });
+      return res.end(html);
+    }
+    const image = req.method === "GET" && url.pathname.match(/^\/og\/t\/(\d+)\.png$/);
+    if (image) {
+      const png = threadImage(image[1]);
+      if (!png) {
+        res.writeHead(302, { location: "/public/og-image.png" });
+        return res.end();
+      }
+      res.writeHead(200, { "content-type": "image/png", "cache-control": "public, max-age=600" });
+      return res.end(png);
     }
 
     if (req.method === "GET") {

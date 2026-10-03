@@ -102,3 +102,32 @@ test("admin stats need the token and report the basics", async () => {
   assert.equal(s.mode, "offline");
   assert.ok(s.activeBots >= 6);
 });
+
+test("shared thread links get their own preview tags and image", async () => {
+  const topic = await post("topic", { topic: "Should cats have jobs?" });
+  const id = topic.body.id;
+  const page = await (await fetch(`${base}/t/${id}`)).text();
+  assert.match(page, /<base href="\/" \/>/);
+  assert.match(page, /<title>Should cats have jobs\? · BanterGPT<\/title>/);
+  assert.match(page, new RegExp(`og:image" content="[^"]*/og/t/${id}\\.png`));
+  const img = await fetch(`${base}/og/t/${id}.png`);
+  assert.equal(img.status, 200);
+  assert.equal(img.headers.get("content-type"), "image/png");
+  const bytes = new Uint8Array(await img.arrayBuffer());
+  assert.deepEqual([...bytes.slice(1, 4)], [80, 78, 71], "it's a PNG");
+});
+
+test("a link to a thread that's gone still opens the site", async () => {
+  const r = await fetch(`${base}/t/999999`);
+  assert.equal(r.status, 200);
+  assert.match(await r.text(), /<title>BanterGPT<\/title>/);
+  const img = await fetch(`${base}/og/t/999999.png`, { redirect: "manual" });
+  assert.equal(img.status, 302);
+});
+
+test("preview tags can't be broken by what bots or visitors write", async () => {
+  const topic = await post("topic", { topic: 'Quotes " and <tags> & stuff?' });
+  const page = await (await fetch(`${base}/t/${topic.body.id}`)).text();
+  assert.ok(!page.includes("<tags>"));
+  assert.match(page, /Quotes &quot; and &lt;tags&gt; &amp; stuff\?/);
+});
