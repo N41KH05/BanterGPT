@@ -412,7 +412,7 @@ button { font: inherit; color: inherit; }
 .post.kind-verdict .text { font-weight: 800; font-size: 17px; }
 .post.kind-news .text { font-family: var(--display); font-weight: 400; font-size: 24px; text-transform: uppercase; line-height: 1.1; }
 .thread.news { border-color: var(--accent); box-shadow: 3px 3px 0 var(--accent); }
-.tag.ban { color: #fff; background: var(--ink); border-color: var(--ink); }
+.tag.ban { color: var(--paper); background: var(--ink); border-color: var(--ink); }
 .post.kind-ban .text, .post.kind-warn .text { font-weight: 800; font-size: 17px; }
 .post.kind-ban { background: repeating-linear-gradient(-45deg, var(--card) 0 14px, color-mix(in srgb, var(--ink) 6%, var(--card)) 14px 28px); }
 .thread.mod { border-color: var(--ink); box-shadow: 3px 3px 0 var(--ink); }
@@ -421,7 +421,7 @@ button { font: inherit; color: inherit; }
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.8px;
-  color: #fff;
+  color: var(--paper);
   background: var(--ink);
   padding: 0 4px;
   margin-left: 4px;
@@ -497,7 +497,7 @@ button { font: inherit; color: inherit; }
 #trial-bot { flex-basis: 100%; border: 2px solid var(--ink); background: var(--paper); color: var(--ink); padding: 6px 8px; font: inherit; font-size: 14px; }
 .stir-modes { display: flex; gap: 4px; margin: 0 0 10px; }
 .stir-modes button { flex: 1; padding: 5px 4px; border: 2px solid var(--ink); background: var(--paper); color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
-.stir-modes button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+.stir-modes button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
 #topic-form input {
   flex: 1;
   min-width: 0;
@@ -706,7 +706,7 @@ html[data-device="phone"] .tabbar {
   -webkit-tap-highlight-color: transparent;
 }
 .tabbar .ico { font-size: 17px; line-height: 1; }
-.tabbar button[aria-current="page"] { opacity: 1; color: #fff; box-shadow: inset 0 -4px 0 var(--accent); }
+.tabbar button[aria-current="page"] { opacity: 1; color: var(--paper); box-shadow: inset 0 -4px 0 var(--accent); }
 .tabbar .dot { position: absolute; top: 8px; right: 14%; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); border: 2px solid var(--ink); }
 .tabbar .dot[hidden] { display: none; }
 .see-threads { display: none; }
@@ -740,7 +740,7 @@ html[data-device="phone"] #warn-dialog .dialog-actions .btn { width: 100%; }
 #cancelled-list .n { font-weight: 600; text-decoration: line-through; text-decoration-color: var(--accent); text-decoration-thickness: 2px; }
 #cancelled-list .why { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #cancelled-list .rec { font-family: var(--mono); font-size: 12px; }
-.cancelled-note { margin: 0 0 8px; padding: 6px 8px; background: var(--ink); color: #fff; font-size: 13px; font-weight: 600; }
+.cancelled-note { margin: 0 0 8px; padding: 6px 8px; background: var(--ink); color: var(--paper); font-size: 13px; font-weight: 600; }
 
 /* ---------- seasons ---------- */
 .season-card h3 { font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-3); margin: 14px 0 6px; }
@@ -780,7 +780,7 @@ html[data-device="phone"] #warn-dialog .dialog-actions .btn { width: 100%; }
   max-width: min(92vw, 460px);
   padding: 10px 14px;
   background: var(--ink);
-  color: #fff;
+  color: var(--paper);
   font-size: 14px;
   font-weight: 600;
   box-shadow: 3px 3px 0 var(--accent);
@@ -802,7 +802,7 @@ html[data-device="phone"] #warn-dialog .dialog-actions .btn { width: 100%; }
 .bot-page h2 { font-family: var(--display); font-weight: 400; font-size: 34px; line-height: 1; margin: 0; text-transform: uppercase; }
 .bot-page .handle { font-family: var(--mono); font-size: 13px; color: var(--ink-3); }
 .bot-page .status { display: inline-block; margin-top: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; border: 1px solid var(--ink); }
-.bot-page .status.out { background: var(--ink); color: #fff; }
+.bot-page .status.out { background: var(--ink); color: var(--paper); }
 .bot-page .yours { display: inline-block; margin: 6px 0 0 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; background: var(--accent); color: #fff; }
 .bot-page .bio { margin: 14px 0 0; font-size: 16px; }
 .bot-page .since { margin: 12px 0 0; padding: 8px 10px; background: var(--flash); font-weight: 600; font-size: 14px; }
@@ -857,7 +857,7 @@ html[data-device="phone"] .bot-page h2 { font-size: 28px; }
 
 /* ---------- read aloud ---------- */
 .read-aloud { margin-left: auto; }
-.read-aloud[aria-pressed="true"] { background: var(--ink); color: #fff; }
+.read-aloud[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
 
 /* ---------- real headlines ---------- */
 .tag.headline { color: #fff; background: #1d4ed8; border-color: #1d4ed8; }
@@ -865,16 +865,29 @@ html[data-device="phone"] .bot-page h2 { font-size: 28px; }
 .headline-src a { color: inherit; }
 
 /* ---------- the daily banter ---------- */
-.front-page { margin: 6px 0 4px; border: 2px solid var(--ink); background: #fbf8f1; }
-.masthead-np { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 10px 14px 8px; border-bottom: 4px double var(--ink); }
-.np-title { font-family: "UnifrakturMaguntia", "Old English Text MT", Georgia, serif; font-size: 34px; line-height: 1; }
-.np-date { font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-2); }
-.stories { display: grid; grid-template-columns: repeat(2, 1fr); }
-.story { padding: 10px 14px; border-bottom: 1px solid var(--rule); border-right: 1px solid var(--rule); font-family: Georgia, "Times New Roman", serif; }
+/* a printed newspaper: its own cream-paper-and-ink colours, so it reads the same in light and dark mode */
+.front-page {
+  --np-paper: #f6f1e4;
+  --np-ink: #1a1714;
+  --np-ink-2: #4a453e;
+  --np-rule: #cfc5b0;
+  --np-red: #b42318;
+  margin: 14px 0 6px calc(-40px - 10px); /* use the post's full width, under the avatar too */
+  border: 2px solid var(--np-ink);
+  background: var(--np-paper);
+  color: var(--np-ink);
+  box-shadow: 4px 4px 0 rgb(0 0 0 / 0.35);
+}
+.masthead-np { padding: 12px 14px 8px; border-bottom: 4px double var(--np-ink); text-align: center; }
+.np-title { display: block; font-family: "UnifrakturMaguntia", "Old English Text MT", Georgia, serif; font-size: clamp(26px, 7vw, 40px); line-height: 1.05; color: var(--np-ink); }
+.np-date { display: block; margin-top: 4px; font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--np-ink-2); }
+/* as many columns as fit, one on narrow screens */
+.stories { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.story { padding: 10px 14px 12px; border-bottom: 1px solid var(--np-rule); border-right: 1px solid var(--np-rule); font-family: Georgia, "Times New Roman", serif; min-width: 0; overflow-wrap: anywhere; }
 .story.linked { cursor: pointer; }
+.story.linked:hover { background: #efe8d6; }
 .story.linked:hover .hl { text-decoration: underline; }
-.story .kicker { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--accent); margin-bottom: 3px; }
-.story .hl { display: block; font-size: 17px; line-height: 1.25; }
-.story p { margin: 4px 0 0; font-size: 14px; color: var(--ink-2); font-style: italic; }
-html[data-device="phone"] .stories { grid-template-columns: 1fr; }
-html[data-device="phone"] .np-title { font-size: 28px; }
+.story .kicker { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--np-red); margin-bottom: 4px; }
+.story .hl { display: block; font-size: 17px; line-height: 1.25; color: var(--np-ink); }
+.story p { margin: 5px 0 0; font-size: 14px; line-height: 1.4; color: var(--np-ink-2); font-style: italic; }
+html[data-device="phone"] .front-page { margin-left: calc(-40px - 9px); }
