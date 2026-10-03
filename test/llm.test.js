@@ -77,3 +77,11 @@ test("headline check: YES passes, anything else (or an error) doesn't", async ()
   respond = () => ({ network: true });
   assert.equal(await llm.headlineOk("x"), false);
 });
+
+test("usage is counted by purpose", async () => {
+  respond = () => ({ text: "ALLOW" });
+  await llm.aiReview("post", "x");
+  const stats = llm.usageStats();
+  assert.ok(stats.lastHour.moderation.allowed >= 1);
+  assert.match(llm.usageLine(), /AI calls in the last hour/);
+});

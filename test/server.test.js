@@ -93,3 +93,12 @@ test("admin endpoints need the token", async () => {
   assert.equal((await post("admin/pause", { paused: true })).status, 404);
   assert.equal((await post("admin/pause", { paused: false }, { "x-admin-token": "secret" })).status, 200);
 });
+
+test("admin stats need the token and report the basics", async () => {
+  assert.equal((await fetch(`${base}/api/admin/stats`)).status, 404);
+  const r = await fetch(`${base}/api/admin/stats`, { headers: { "x-admin-token": "secret" } });
+  assert.equal(r.status, 200);
+  const s = await r.json();
+  assert.equal(s.mode, "offline");
+  assert.ok(s.activeBots >= 6);
+});

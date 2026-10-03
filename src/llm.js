@@ -140,13 +140,45 @@ async function callGemini(bot, userContent, { review = false } = {}) {
 
 const callModel = PROVIDER === "gemini" ? callGemini : callClaude;
 
+// ---------- usage stats ----------
+// every AI call counted by what it was for, so the logs show where the money goes
+const usage = []; // { at, kind, outcome }
+const started = Date.now();
+const totals = {};
+export function track(kind, outcome = "ok") {
+  const now = Date.now();
+  usage.push({ at: now, kind, outcome });
+  while (usage.length && now - usage[0].at > 3_600_000) usage.shift();
+  const key = `${kind}:${outcome}`;
+  totals[key] = (totals[key] || 0) + 1;
+}
+export function usageStats() {
+  const lastHour = {};
+  for (const { kind, outcome } of usage) {
+    lastHour[kind] ||= {};
+    lastHour[kind][outcome] = (lastHour[kind][outcome] || 0) + 1;
+  }
+  const calls = usage.filter((u) => u.outcome !== "fallback" && u.outcome !== "capped").length;
+  return { provider: PROVIDER, model: MODEL, aiCallsLastHour: calls, lastHour, sinceStart: totals, upMinutes: Math.round((Date.now() - started) / 60_000) };
+}
+// one readable line for the logs, e.g. "41 AI calls: 20 post, 18 moderation (17 allowed, 1 blocked)…"
+export function usageLine() {
+  const { aiCallsLastHour, lastHour } = usageStats();
+  const parts = Object.entries(lastHour).map(([kind, outcomes]) => {
+    const n = Object.values(outcomes).reduce((a, b) => a + b, 0);
+    const detail = Object.keys(outcomes).length > 1 || !outcomes.ok ? ` (${Object.entries(outcomes).map(([o, c]) => `${c} ${o}`).join(", ")})` : "";
+    return `${n} ${kind}${detail}`;
+  });
+  return `${aiCallsLastHour} AI calls in the last hour: ${parts.join(", ") || "none"}`;
+}
+
 // ---------- cost guard ----------
 // AI-written posts per rolling hour. Past this, posts use the free templates until the hour
 // rolls over. Moderation checks don't count (they're already rate-limited per visitor).
 const HOURLY_CAP = Number(process.env.BANTER_MAX_AI_POSTS_PER_HOUR ?? 240);
 const recentCalls = [];
 let capWarned = 0;
-async function callPost(bot, content) {
+async function callPost(bot, content, kind = "post") {
   const now = Date.now();
   while (recentCalls.length && now - recentCalls[0] > 3_600_000) recentCalls.shift();
   if (recentCalls.length >= HOURLY_CAP) {
@@ -154,10 +186,18 @@ async function callPost(bot, content) {
       capWarned = now;
       console.warn(`[cost] hit ${HOURLY_CAP} AI posts this hour; using templates until it resets (BANTER_MAX_AI_POSTS_PER_HOUR).`);
     }
+    track(kind, "capped");
     throw new Error("hourly AI budget used up");
   }
   recentCalls.push(now);
-  return callModel(bot, content);
+  try {
+    const text = await callModel(bot, content);
+    track(kind);
+    return text;
+  } catch (err) {
+    track(kind, "error");
+    throw err;
+  }
 }
 export const aiPostsThisHour = () => recentCalls.filter((t) => Date.now() - t < 3_600_000).length;
 
@@ -168,11 +208,13 @@ async function withFallback(fn, fallback, bot) {
   try {
     const text = await fn();
     if (!bot?.custom && screenText(text)) {
+      track("post", "replaced");
       console.warn("[moderation] replaced an AI post that touched a blocked subject");
       return fallback();
     }
     return text;
   } catch (err) {
+    track("post", "fallback");
     if (!warned && err.message !== "hourly AI budget used up") {
       console.warn(`[llm] ${err.message} — falling back to offline templates for this post.`);
       warned = true;
@@ -216,6 +258,10 @@ export async function aiReview(kind, text, { failOpen = false } = {}) {
     const answer = await callModel(REVIEW_PROMPT, `Submission type: ${kind}\n---\n${text}\n---`, { review: true });
     const blocked = /^\s*BLOCK/i.test(answer);
     const allowed = /^\s*ALLOW/i.test(answer);
+    if (blocked || allowed) {
+      track("moderation", blocked ? "blocked" : "allowed");
+      if (blocked) console.log(`[moderation] AI blocked a ${kind}: ${answer.replace(/^\s*BLOCK:?\s*/i, "").slice(0, 120)}`);
+    }
     if (!blocked && !allowed) throw refusal(`unclear answer: ${answer.slice(0, 60)}`); // a lecture instead of a verdict
     return { allowed, reason: blocked ? answer.replace(/^\s*BLOCK:?\s*/i, "").slice(0, 120) : null };
   } catch (err) {
@@ -223,6 +269,7 @@ export async function aiReview(kind, text, { failOpen = false } = {}) {
     // ALLOW/BLOCK) usually means the text is nasty: never treat that as allowed.
     // Only a network hiccup or timeout falls back to failOpen.
     const refused = Boolean(err.refused);
+    track("moderation", refused ? "refused" : "failed");
     console.warn(`[moderation] AI review ${refused ? "refused" : "failed"} (${err.message.slice(0, 120)}); ${refused || !failOpen ? "not allowing" : "allowing"} the ${kind}.`);
     if (refused) return { allowed: false, refused: true, reason: "provider-refused" };
     if (failOpen) return { allowed: true, reason: null };
@@ -256,7 +303,7 @@ export async function moderatorDecision({ bot, offence, strikes, maxStrikes }) {
     `Offence: ${offence}`,
     `Strikes including this one: ${strikes} of ${maxStrikes}`,
   ].join("\n");
-  const answer = await callPost(MODERATOR_PROMPT, content);
+  const answer = await callPost(MODERATOR_PROMPT, content, "moderator");
   const m = answer.match(/^\s*(BAN|WARN)\s*[|:\-]\s*(.+)$/is);
   if (!m) throw new Error(`unclear answer: ${answer.slice(0, 60)}`);
   return { action: m[1].toUpperCase() === "BAN" ? "ban" : "warn", text: m[2].trim().replace(/^["“]|["”]$/g, "") };
@@ -273,8 +320,11 @@ const HEADLINE_PROMPT = [
 export async function headlineOk(title) {
   try {
     const answer = await callModel(HEADLINE_PROMPT, `Headline: ${title}`, { review: true });
-    return /^\s*YES/i.test(answer);
+    const ok = /^\s*YES/i.test(answer);
+    track("headline", ok ? "yes" : "no");
+    return ok;
   } catch {
+    track("headline", "failed");
     return false;
   }
 }
@@ -316,7 +366,7 @@ export const llmGenerator = {
       'Answer in exactly this format: STARS: <1-5> | <review>',
     ].join("\n");
     try {
-      const answer = await callPost(bot, content);
+      const answer = await callPost(bot, content, "review");
       const m = answer.match(/STARS:\s*([1-5])\s*\|\s*(.+)/is);
       if (!m) throw new Error("bad review format");
       return { stars: Number(m[1]), text: tidy(m[2]) };
@@ -345,7 +395,7 @@ export const llmGenerator = {
     ].join("\n");
     const fallback = () => offlineGenerator.verdict(ctx);
     try {
-      const answer = await callPost(system, content);
+      const answer = await callPost(system, content, "judge");
       const m = answer.match(/WINNER:\s*@?(\w+)\s*\|\s*LOSER:\s*@?(\w+)\s*\|\s*(.+)/i);
       if (!m || screenText(m[3])) return fallback();
       const byHandle = (h) => participants.find((p) => p.handle.toLowerCase() === h.toLowerCase());

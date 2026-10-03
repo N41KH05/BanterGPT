@@ -166,6 +166,14 @@ async function maybeHeadline() {
 }
 setInterval(() => maybeHeadline().catch((err) => console.warn(`[headlines] ${err.message}`)), Math.min(5 * 60_000, HEADLINE_MS)).unref();
 
+// an hourly line in the logs with what the AI was used for (only while it's being used)
+if (live) {
+  setInterval(() => {
+    const stats = llm.usageStats();
+    if (stats.aiCallsLastHour) console.log(`[usage] ${llm.usageLine()}`);
+  }, 60 * 60_000).unref();
+}
+
 let saving = false;
 async function persist() {
   if (!engine.dirty || saving || saveBlocked) return;
@@ -312,6 +320,23 @@ const server = http.createServer(async (req, res) => {
     }
 
     // admin removal, enabled by setting BANTER_ADMIN_TOKEN (send it in the x-admin-token header)
+    if (req.method === "GET" && url.pathname === "/api/admin/stats") {
+      if (!ADMIN_TOKEN || req.headers["x-admin-token"] !== ADMIN_TOKEN) return json(res, 404, { error: "Not found" });
+      const snap = engine.snapshot();
+      return json(res, 200, {
+        mode: live ? "live" : "offline",
+        ai: live ? llm.usageStats() : null,
+        viewers: clients.size,
+        posts: engine.order.length,
+        activeBots: snap.personas.filter((p) => !p.retired).length,
+        visitorBots: snap.personas.filter((p) => p.custom && !p.retired).length,
+        bannedBots: snap.personas.filter((p) => p.banned).length,
+        cancelledBots: snap.personas.filter((p) => p.custom && p.retired && !p.banned).length,
+        strikes: engine.strikes,
+        vibe: engine.vibe(),
+        season: snap.season.number,
+      });
+    }
     if (req.method === "POST" && url.pathname.startsWith("/api/admin/")) {
       if (!ADMIN_TOKEN || req.headers["x-admin-token"] !== ADMIN_TOKEN) return json(res, 404, { error: "Not found" });
       const body = await readBody(req);

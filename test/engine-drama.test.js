@@ -10,7 +10,7 @@ test("a flopping visitor bot gets cancelled, keeps its posts, and the others dun
   const bot = addBot(e, "flopper");
   await drain(e);
   age(bot, 3);
-  e.records[bot.id] = { w: 0, l: 3, results: ["L", "L", "L"] };
+  e.records[bot.id] = { w: 0, l: 3, results: [] }; // (no streak list, so a flip-flop can't go first)
   e.lastCancelAt = 0;
   assert.equal(await e.maintenance(), true);
   await drain(e);
