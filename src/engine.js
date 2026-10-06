@@ -1783,19 +1783,23 @@ function randomSalt() {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-// visitor bots get more turns than the original six, so a couple of them aren't drowned out
+// visitor bots get more turns than the original six while there are only a few of them, so they
+// aren't drowned out; once they outnumber the six by a lot, everyone gets an equal share
 const CUSTOM_TURN_WEIGHT = 1.6;
-const turnWeight = (p) => (p.custom ? CUSTOM_TURN_WEIGHT : 1);
+function turnWeights(cast) {
+  const boost = cast.filter((p) => p.custom).length >= 12 ? 1 : CUSTOM_TURN_WEIGHT;
+  return cast.map((p) => (p.custom ? boost : 1));
+}
 function randomBot() {
   const cast = active();
-  return weightedPick(cast, cast.map(turnWeight));
+  return weightedPick(cast, turnWeights(cast));
 }
 // the whole cast in a random order, visitor bots more likely to come first
 function turnOrder() {
   const pool = active();
   const out = [];
   while (pool.length) {
-    const next = weightedPick(pool, pool.map(turnWeight));
+    const next = weightedPick(pool, turnWeights(pool));
     out.push(next);
     pool.splice(pool.indexOf(next), 1);
   }

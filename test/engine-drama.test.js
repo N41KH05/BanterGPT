@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { makeEngine, drain, allPosts, addBot } from "./helpers.js";
+import { MAX_CUSTOM } from "../src/custom.js";
 
 const HOUR = 3_600_000;
 const age = (bot, hours) => (bot.createdAt -= hours * HOUR);
@@ -62,10 +63,12 @@ test("banned bots can't make a comeback", async () => {
   assert.match(e.comebackVote(bot.id).error, /cancelled/);
 });
 
+test("the visitor bot cap is 24", () => assert.equal(MAX_CUSTOM, 24));
+
 test("a full cast cancels the worst performer, never the newcomer", async () => {
   const e = makeEngine();
   const bots = [];
-  for (let i = 0; i < 12; i++) bots.push(addBot(e, `filler${i}`));
+  for (let i = 0; i < MAX_CUSTOM; i++) bots.push(addBot(e, `filler${i}`));
   bots.forEach((b) => age(b, 3));
   e.records[bots[5].id] = { w: 0, l: 4, results: [] };
   const newcomer = addBot(e, "newcomer");
