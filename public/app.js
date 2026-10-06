@@ -1626,15 +1626,114 @@ function renderPicks() {
   }
 }
 
+// ---------- emoji keyboard for the bot's face ----------
+const EMOJI_SETS = {
+  "😀 Faces": "😀 😂 🤣 😎 🤓 🧐 😏 😤 😡 🤬 😈 👿 🤡 💀 👻 🤖 👽 😴 🥱 🤪 🥴 🤠 🥸 😇 🙄 😬 🫠 🤑 🤢 🤮 🥶 🥵 😱 🤯 🫡 🤐 😭 🥹 😋 🤔",
+  "🧑 People": "🧔 👨‍🍳 👩‍🍳 👮 🕵️ 👷 👨‍💻 👩‍💻 🧑‍🎤 🧑‍🚀 🧑‍🏫 🧑‍⚕️ 🧑‍🌾 💂 🥷 🧙 🧛 🧟 🧜 🧚 🦸 🦹 🤴 👸 👵 👴 👶 🏋️ 🤺 🕺 💃 🧑‍🔧 🧑‍🎨 🧑‍⚖️ 🤵 👰",
+  "🐸 Animals": "🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🐔 🐧 🦆 🦅 🦉 🦇 🐺 🐗 🐴 🦄 🐝 🐛 🦋 🐌 🐢 🐍 🦖 🐙 🦑 🦀 🐟 🐬 🦈 🐊 🦍 🦥 🦦 🦨 🦩 🐐 🦝",
+  "🍕 Food": "🍕 🍔 🌭 🌮 🍟 🍣 🍜 🍝 🥐 🥖 🧀 🥩 🍗 🥓 🥚 🧇 🥞 🍩 🍪 🎂 🍫 🍿 🧂 🥑 🍆 🌶️ 🥦 🍄 🍍 🍌 🍎 🍋 ☕ 🍺 🍷 🥃 🧃 🥤 🫖",
+  "🎩 Things": "💪 🧠 👑 🎩 🧢 🕶️ 💼 💰 💸 💎 📈 📉 🎮 🎸 🎤 📸 📚 🔮 🧪 🔧 🔨 🧱 🏠 🏰 🚀 🚗 ✈️ ⚽ 🏀 🎯 🎲 🃏 🗿 🪦 ⚰️ 🧻 🛋️ 🧸 📺 🛸",
+  "🔥 Symbols": "🔥 ⚡ 💥 ✨ 🌙 ⭐ ☀️ 🌈 ❄️ 🌊 💯 ❗ ❓ 💤 💢 💩 ⚠️ 🚫 ♻️ 🏴‍☠️ 🎉 💔 ❤️ 🖤 💜 💚 🗯️ 💬 🌀 🎭",
+};
+const emojiList = (cat) => EMOJI_SETS[cat].split(" ");
+// keep at most two characters (what the server keeps), counting emoji properly
+const firstGlyphs = (t) =>
+  Intl.Segmenter
+    ? [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(t.trim())].slice(0, 2).map((x) => x.segment).join("")
+    : [...t.trim()].slice(0, 2).join("");
+
+function setupEmojiPicker() {
+  const picker = $("#emoji-picker");
+  const btn = $("#emoji-btn");
+  const hidden = $('#bot-form input[name="avatar"]');
+  const tabs = picker.querySelector(".emoji-tabs");
+  const grid = picker.querySelector(".emoji-grid");
+  const own = $("#emoji-own");
+  let cat = Object.keys(EMOJI_SETS)[0];
+
+  const setFace = (face) => {
+    hidden.value = face || "🤖";
+    $("#emoji-current").textContent = hidden.value;
+  };
+  const close = () => {
+    picker.hidden = true;
+    btn.setAttribute("aria-expanded", "false");
+  };
+  const render = () => {
+    tabs.replaceChildren(
+      ...Object.keys(EMOJI_SETS).map((c) =>
+        el(
+          "button",
+          { type: "button", role: "tab", "aria-selected": String(c === cat), title: c.split(" ")[1], onclick: () => ((cat = c), render()) },
+          c.split(" ")[0],
+        ),
+      ),
+    );
+    grid.setAttribute("aria-label", cat.split(" ")[1]);
+    grid.replaceChildren(
+      ...emojiList(cat).map((e) =>
+        el(
+          "button",
+          {
+            type: "button",
+            role: "option",
+            "aria-selected": String(e === hidden.value),
+            onclick: () => {
+              setFace(e);
+              close();
+              btn.focus();
+            },
+          },
+          e,
+        ),
+      ),
+    );
+  };
+
+  btn.addEventListener("click", () => {
+    const open = picker.hidden;
+    picker.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+    if (open) {
+      render();
+      (grid.querySelector('[aria-selected="true"]') || grid.querySelector("button"))?.focus();
+    }
+  });
+  picker.querySelector(".emoji-random").addEventListener("click", () => {
+    const all = Object.keys(EMOJI_SETS).flatMap(emojiList);
+    setFace(all[Math.floor(Math.random() * all.length)]);
+    render();
+  });
+  own.addEventListener("input", () => own.value.trim() && setFace(firstGlyphs(own.value)));
+  // Esc closes the picker first, not the whole dialog
+  picker.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+      btn.focus();
+    }
+  });
+  return {
+    reset() {
+      own.value = "";
+      setFace(hidden.value);
+      close();
+    },
+  };
+}
+
 function setupBotDialog() {
   const dialog = $("#bot-dialog");
   const form = $("#bot-form");
   const msg = $("#bot-msg");
+  const emoji = setupEmojiPicker();
   $("#new-bot").addEventListener("click", () => {
     picks.rivals.clear();
     picks.allies.clear();
     msg.textContent = "";
     renderPicks();
+    emoji.reset();
     dialog.showModal();
   });
   $("#bot-cancel").addEventListener("click", () => dialog.close());
@@ -1657,6 +1756,7 @@ function setupBotDialog() {
       const { persona } = await api("personas", body);
       dialog.close();
       form.reset();
+      $('#bot-form input[name="avatar"]').value = "🤖"; // the next bot starts with a fresh face
       saveJSON(MINE_KEY, [...new Set([...myBots(), persona.id])].slice(-20));
       saveJSON(SEEN_KEY, { ...loadJSON(SEEN_KEY, {}), [persona.id]: Date.now() });
       if (!state.byId[persona.id]) upsertPersona(persona);

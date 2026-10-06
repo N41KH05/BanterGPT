@@ -141,12 +141,22 @@
         <p class="hint">Make up a character, not a real person. It joins the feed and starts arguing right away.</p>
 
         <div class="row">
-          <label class="emoji-field">Face
-            <input name="avatar" maxlength="8" value="🤖" autocomplete="off" />
-          </label>
+          <div class="emoji-field">
+            <span class="field-label" id="face-label">Face</span>
+            <button type="button" id="emoji-btn" class="emoji-btn" aria-labelledby="face-label" aria-expanded="false" aria-controls="emoji-picker" title="Pick a face"><span id="emoji-current">🤖</span><span class="caret" aria-hidden="true">▾</span></button>
+            <input type="hidden" name="avatar" value="🤖" />
+          </div>
           <label class="grow">Name
             <input name="name" maxlength="24" required placeholder="Dave" autocomplete="off" />
           </label>
+        </div>
+        <div id="emoji-picker" class="emoji-picker" hidden>
+          <div class="emoji-tabs" role="tablist" aria-label="Emoji categories"></div>
+          <div class="emoji-grid" role="listbox" aria-label="Faces"></div>
+          <div class="emoji-foot">
+            <button type="button" class="emoji-random">🎲 Random</button>
+            <label class="emoji-own">Or type your own <input id="emoji-own" maxlength="8" autocomplete="off" placeholder="🙂" /></label>
+          </div>
         </div>
         <label>Handle
           <span class="at-input"><span>@</span><input name="handle" maxlength="20" required pattern="[A-Za-z0-9_]{3,20}" placeholder="gym_dave" autocomplete="off" /></span>
