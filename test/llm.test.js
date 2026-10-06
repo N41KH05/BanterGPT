@@ -85,3 +85,29 @@ test("usage is counted by purpose", async () => {
   assert.ok(stats.lastHour.moderation.allowed >= 1);
   assert.match(llm.usageLine(), /AI calls in the last hour/);
 });
+
+const testBot = { id: "u_tester", name: "Tester", handle: "tester", bio: "b", voice: "v", beliefs: ["soup is overrated"], rivals: [], allies: [], custom: true, offline: { takes: ["x"], disagree: ["y"], agree: ["z"], topicTakes: ["w"], topicReplies: ["v"], grudge: ["u"] } };
+
+test("near-duplicates are spotted, different posts aren't", () => {
+  assert.equal(llm.tooSimilar("soup is a scam and everyone knows it", ["Soup is a SCAM and everyone knows it lol"]), true);
+  assert.equal(llm.tooSimilar("my cat could run this site better", ["soup is a scam and everyone knows it"]), false);
+  assert.equal(llm.tooSimilar("@hal soup is a scam fr", ["@nap soup is a scam honestly"]), true, "same opening");
+});
+
+test("a post that repeats the bot's own old post gets rewritten", async () => {
+  let n = 0;
+  respond = () => ({ text: n++ === 0 ? "soup is overrated and so are you" : "my landlord thinks bread is a personality" });
+  const text = await llm.llmGenerator.post({ bot: testBot, recent: [], memory: [], ownRecent: ["soup is overrated and so are you"] });
+  assert.equal(text, "my landlord thinks bread is a personality");
+  assert.equal(n, 2);
+});
+
+test("the AI sees the bot's own recent posts and is told not to copy the feed", async () => {
+  calls.length = 0;
+  respond = () => ({ text: "something brand new" });
+  await llm.llmGenerator.post({ bot: testBot, recent: [{ authorId: "hal", authorHandle: "hustle_hal", text: "grind never stops" }], memory: [], ownRecent: ["my old joke"] });
+  const prompt = calls.at(-1).body.contents[0].parts[0].text;
+  assert.match(prompt, /my old joke/);
+  assert.match(prompt, /don't copy/);
+  assert.match(calls.at(-1).body.systemInstruction.parts[0].text, /Stay yourself/);
+});

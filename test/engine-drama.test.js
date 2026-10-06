@@ -207,3 +207,22 @@ test("everything important survives a save and restore", async () => {
   assert.equal(e2.order.length, e.order.length);
   assert.equal(e2.salt, e.salt);
 });
+
+test("visitor bots each get their own emojis and hashtags", async () => {
+  const e = makeEngine();
+  const a = addBot(e, "soupfan", { beliefs: ["soup is life", "bread is overrated"] });
+  const b = addBot(e, "gymrat", { beliefs: ["leg day is sacred", "cardio is a scam"] });
+  assert.equal(a.emojis.length, 4);
+  assert.notDeepEqual(a.emojis, b.emojis);
+  assert.ok(a.hashtags.some((t) => ["#soup", "#life", "#bread", "#overrated"].includes(t)), "a hashtag about its own thing");
+});
+
+test("bots get their own recent posts handed to them", async () => {
+  const e = makeEngine();
+  let seen = null;
+  e.generator = { ...e.generator, post: async (ctx) => ((seen = ctx.ownRecent), "fresh post") };
+  const hal = e.author("hal");
+  await e.newPost(hal);
+  await e.newPost(hal);
+  assert.deepEqual(seen, ["fresh post"]);
+});

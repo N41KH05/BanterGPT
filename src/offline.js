@@ -1,17 +1,20 @@
 // Offline generator: assembles posts from each persona's template banks.
 // No API key needed, so the prototype runs anywhere for free.
 
-const lastUsed = new Map(); // "botId:bank" -> last index, to avoid immediate repeats
+const lastUsed = new Map(); // "botId:bank" -> the last few lines used, so templates don't repeat
 
 function pick(bot, bank, allow = () => true) {
   const all = bot.offline[bank] || [];
   const items = all.filter(allow).length ? all.filter(allow) : all;
   if (!items || items.length === 0) return "";
+  // never one of the last few lines this bot used from this bank
   const key = `${bot.id}:${bank}`;
-  let i = Math.floor(Math.random() * items.length);
-  if (items.length > 1 && i === lastUsed.get(key)) i = (i + 1) % items.length;
-  lastUsed.set(key, i);
-  return items[i];
+  const used = lastUsed.get(key) || [];
+  const freshItems = items.filter((t) => !used.includes(t));
+  const pool = freshItems.length ? freshItems : items;
+  const line = pool[Math.floor(Math.random() * pool.length)];
+  lastUsed.set(key, [...used, line].slice(-Math.min(8, items.length - 1))); // go through the bank before repeating
+  return line;
 }
 
 function quoteOf(text) {
@@ -125,7 +128,7 @@ function typo(word) {
 // lowercase the first letter, unless it starts an acronym or name like "IKEA"
 const lowerFirst = (t) => (/^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t);
 function withVibe(text, vibe) {
-  if (!text || !vibe || Math.random() > 0.6) return text;
+  if (!text || !vibe || Math.random() > 0.3) return text;
   if (vibe === "tipsy") {
     let out = text.split(" ").map((w) => (/^[@#]/.test(w) ? w : Math.random() < 0.15 ? w.toUpperCase() : typo(w))).join(" ");
     return out + randomOf([" lmaooo", " 🍻", " i love u all (not u)", " WHO SAID THAT", ""]);
@@ -231,7 +234,7 @@ async function replyText({ bot, target, targetAuthor, stance, grudgeLevel, topic
     let bank = "disagree";
     if (stance === "agree") bank = "agree";
     else if (topic && Math.random() < 0.6) bank = "topicReplies"; // stay on the thread's topic
-    else if (grudgeLevel >= 3 && Math.random() < 0.5) bank = "grudge";
+    else if (grudgeLevel >= 3 && Math.random() < 0.3) bank = "grudge";
     const quote = quoteOf(target.text);
     // quoting a 2-word post reads badly, so only use quote lines when there's something to quote
     const quotable = quote.split(" ").length >= 4;

@@ -41,6 +41,8 @@ function systemPrompt(bot) {
     `- Post like real social media: about half your posts get an emoji or two that fit you (${(bot.emojis || ["💀", "😂", "🔥", "🙄", "🤡"]).join(" ")}), and about a third end with a hashtag, often a mocking one (${(bot.hashtags || ["#L", "#ratio", "#cope", "#delusional"]).join(" ")}, or make one up). Max 2 emojis and 2 hashtags. Mix it up, don't use the same ones every time.`,
     "- Be rude. Dismissive, sarcastic, roast the other person's take. Swearing and crude or dark humour are fine. Never be polite or balanced, never say 'great point'.",
     "- Stay on topic: respond to the specific thing being discussed. Only bring up your pet subjects if they actually connect.",
+    "- Stay yourself. Your angle always comes from YOUR personality, obsessions and opinions above. Never pick up other characters' pet topics, catchphrases, hashtags or emoji style, even when they're all over the feed. If everyone is saying the same thing, say something different.",
+    "- Never repeat yourself: no reusing your own jokes, openings, phrases or points from earlier posts.",
     "- You are a made-up character. Never claim to be, speak as, or imitate a real, named person, even if your name or description suggests one.",
     "- Dark humour, violence, crime, gang themes and battle-of-the-sexes jokes are fine: it's all fictional characters trash-talking.",
     "- Hard limits: nothing racist (race, ethnicity, nationality, religion) nothing homophobic or transphobic, no slurs, and no genuine hatred of women or men (sexist jokes are fine, dehumanising them isn't). Roast the other posters and their takes, not real, named people.",
@@ -55,6 +57,37 @@ const VIBE_NOTES = {
   sleepy: "Right now it's early morning: groggy, grumpy, no coffee yet. Short and irritable.",
 };
 const vibeLine = (vibe) => (VIBE_NOTES[vibe] ? `\n${VIBE_NOTES[vibe]}` : "");
+
+const ownLine = (own = []) =>
+  own.length ? `\nYour own recent posts (do NOT repeat their jokes, phrases, openings or points):\n- ${own.join("\n- ")}` : "";
+
+// ---------- no repeats ----------
+// word overlap between two posts (ignoring @handles, hashtags, emoji and tiny words)
+const words = (t) => new Set(String(t).toLowerCase().replace(/[@#]\w+/g, " ").match(/[\p{L}\p{N}']{3,}/gu) || []);
+export function similarity(a, b) {
+  const A = words(a);
+  const B = words(b);
+  if (!A.size || !B.size) return 0;
+  let shared = 0;
+  for (const w of A) if (B.has(w)) shared++;
+  return shared / Math.min(A.size, B.size);
+}
+const opening = (t) => String(t).toLowerCase().replace(/^[@#]\w+\s*/g, "").split(/\s+/).slice(0, 3).join(" ");
+export function tooSimilar(text, others = []) {
+  return others.some((o) => o && (similarity(text, o) >= 0.6 || (opening(text).length > 8 && opening(text) === opening(o))));
+}
+// write a post; if it's a near-copy of the bot's own recent posts or what others just said, try once more
+async function fresh(bot, content, avoid, fallback) {
+  const first = await withFallback(() => callPost(bot, content), fallback, bot);
+  if (!tooSimilar(first, avoid)) return first;
+  track("post", "retry");
+  const second = await withFallback(
+    () => callPost(bot, `${content}\n\nYour first try was too close to something already posted: "${first}". Write something completely different: new angle, new words.`),
+    fallback,
+    bot,
+  );
+  return tooSimilar(second, avoid) && !tooSimilar(first, avoid) ? first : second;
+}
 
 function formatFeed(posts) {
   return posts
@@ -335,25 +368,33 @@ export const llmGenerator = {
   model: MODEL,
 
   async post(ctx) {
-    const { bot, recent, memory, feuds = [], mood, vibe } = ctx;
+    const { bot, recent, memory, feuds = [], mood, vibe, ownRecent = [] } = ctx;
+    // most new posts come from the bot's own obsessions, not from echoing the feed
+    const ownTopic = Math.random() < 0.65 && bot.beliefs?.length;
+    const belief = ownTopic ? bot.beliefs[Math.floor(Math.random() * bot.beliefs.length)] : null;
     const content = [
-      "What people are posting right now:",
-      formatFeed(recent) || "(quiet right now)",
+      "What others are posting right now (context only: don't copy their topics or wording):",
+      formatFeed(recent.slice(-6)) || "(quiet right now)",
       memory.length ? `\nRecent stuff that happened to you here:\n- ${memory.join("\n- ")}` : "",
       feuds.length ? `\nYour running feuds:\n- ${feuds.join("\n- ")}` : "",
       mood ? `\nYour mood right now: ${mood.note}` : "",
       vibeLine(vibe),
-      "\nPost something new. Either react to something above (no @-reply needed, just your take) or drop a short opinion of your own. Don't repeat yourself.",
+      ownLine(ownRecent),
+      belief
+        ? `\nPost something new about your own opinion: "${belief}". A fresh angle on it, in your own voice: a hot take, a rant, a dig at people who disagree. Not a restatement of the opinion itself.`
+        : "\nPost something new: react to one thing above from your own point of view (no @-reply needed). Your angle, not theirs.",
     ].join("\n");
-    return withFallback(() => callPost(bot, content), () => offlineGenerator.post(ctx), ctx.bot);
+    const avoid = [...ownRecent, ...recent.filter((p) => p.authorId !== bot.id).map((p) => p.text)];
+    return fresh(bot, content, avoid, () => offlineGenerator.post(ctx));
   },
 
   async topic(ctx) {
-    const { bot, topic, vibe, headline } = ctx;
+    const { bot, topic, vibe, headline, ownRecent = [], otherTakes = [] } = ctx;
     const content = headline
       ? `A real news headline just dropped: "${topic}"\nGive your blunt take on the story or issue, in your own voice. Take a clear side. Argue about the news itself: don't insult, mock or make claims about the real people named in it.${vibeLine(vibe)}`
       : `Someone just asked the feed: "${topic}"\nGive your blunt answer to exactly that question or topic, in your own voice. Take a clear side. If it's about a real person, talk about the idea, not the person.${vibeLine(vibe)}`;
-    return withFallback(() => callPost(bot, content), () => offlineGenerator.topic(ctx), ctx.bot);
+    const others = otherTakes.length ? `\nOthers already answered (don't echo them, take your own angle):\n- ${otherTakes.join("\n- ")}` : "";
+    return fresh(bot, content + others + ownLine(ownRecent), [...ownRecent, ...otherTakes], () => offlineGenerator.topic(ctx));
   },
 
   async review(ctx) {
@@ -413,7 +454,7 @@ export const llmGenerator = {
     const { bot, target, targetAuthor, stance, thread, memory, grudgeLevel, topic, feuds = [], mood: botMood, vibe } = ctx;
     const special = (situation) =>
       withFallback(
-        () => callPost(bot, [situation, memory.length ? `\nRecent stuff that happened to you here:\n- ${memory.join("\n- ")}` : "", vibeLine(vibe)].filter(Boolean).join("\n")),
+        () => callPost(bot, [situation, memory.length ? `\nRecent stuff that happened to you here:\n- ${memory.join("\n- ")}` : "", vibeLine(vibe), ownLine(ctx.ownRecent)].filter(Boolean).join("\n")),
         () => offlineGenerator.reply(ctx),
         bot,
       );
@@ -493,11 +534,14 @@ export const llmGenerator = {
       feuds.length ? `\nYour running feuds (bring up old beef if it fits):\n- ${feuds.join("\n- ")}` : "",
       botMood ? `\nYour mood right now: ${botMood.note}` : "",
       vibeLine(vibe),
+      ownLine(ctx.ownRecent),
       `\nReply to ${who}'s post: "${target.text}"`,
-      `${mood} Respond to what they actually said.`,
+      `${mood} Respond to what they actually said, from your own angle.`,
     ]
       .filter(Boolean)
       .join("\n");
-    return withFallback(() => callPost(bot, content), () => offlineGenerator.reply(ctx), bot);
+    // don't echo the thread or your own old lines
+    const avoid = [...(ctx.ownRecent || []), ...thread.filter((p) => p.authorId !== bot.id).map((p) => p.text)];
+    return fresh(bot, content, avoid, () => offlineGenerator.reply(ctx));
   },
 };

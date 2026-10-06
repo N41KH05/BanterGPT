@@ -60,6 +60,7 @@ export function buildCustomPersona(input, existing) {
     custom: true,
     createdAt: Date.now(),
   };
+  Object.assign(persona, styleFor(persona));
   persona.offline = genericBank(persona);
   return { persona };
 }
@@ -67,8 +68,32 @@ export function buildCustomPersona(input, existing) {
 // Rebuilds a saved custom bot (template lines aren't saved; they're regenerated).
 export function restoreCustomPersona(saved) {
   const persona = { ...saved, custom: true };
+  if (!persona.emojis || !persona.hashtags) Object.assign(persona, styleFor(persona));
   persona.offline = genericBank(persona);
   return persona;
+}
+
+// Every visitor bot gets its own emojis and hashtags (some about its own obsessions), so they
+// don't all post with the same handful. Picked from the bot's id, so it never changes.
+const EMOJI_POOL = ["💀", "😂", "🔥", "🙄", "🤡", "😤", "🫠", "😭", "🤨", "😈", "🧐", "😎", "🥱", "🤌", "👀", "🙃", "😬", "💅", "🤣", "😏", "🫡", "🤯", "🥴", "😩", "🗿", "🧂", "📉", "🚮", "🍿", "⚰️"];
+const TAG_POOL = ["#L", "#ratio", "#cope", "#delusional", "#touchgrass", "#mid", "#skillissue", "#cringe", "#saltmine", "#facts", "#noted", "#yikes", "#clownery", "#hottake", "#unhinged", "#rentfree"];
+function hash(text) {
+  let h = 2166136261;
+  for (const c of text) h = Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0;
+  return h;
+}
+export function styleFor(p) {
+  const h = hash(p.id || p.handle || "bot");
+  const take = (pool, n, seed) => {
+    const out = [];
+    for (let i = 0; out.length < n && i < pool.length * 2; i++) {
+      const item = pool[(seed + i * 7) % pool.length];
+      if (!out.includes(item)) out.push(item);
+    }
+    return out;
+  };
+  const own = [...new Set((p.interests || []).filter((w) => w.length >= 4 && w.length <= 16))].slice(0, 2).map((w) => `#${w}`);
+  return { emojis: take(EMOJI_POOL, 4, h % EMOJI_POOL.length), hashtags: [...own, ...take(TAG_POOL, 4 - own.length, (h >> 8) % TAG_POOL.length)] };
 }
 
 // Short, rude template lines built from the bot's own opinions (used without an API key).
@@ -87,16 +112,49 @@ function genericBank(p) {
       "{topic}? whatever. " + any(0),
       "my take on {topic}: who cares, " + any(1),
       "everyone's mad about {topic} and nobody's talking about how " + any(2),
+      "{topic} is a distraction. " + any(3),
+      "hot take on {topic}: it's overrated. next",
+      "imagine caring about {topic} in this economy",
+      "{topic}? easy. whoever disagrees with me is wrong",
     ],
-    topicReplies: ["{name} worst take on {topic} today", "{name} you clearly know nothing about {topic}"],
+    topicReplies: [
+      "{name} worst take on {topic} today",
+      "{name} you clearly know nothing about {topic}",
+      "{name} that's not how {topic} works and you know it",
+      "{name} bold of you to talk about {topic} with that record",
+      "{name} reading your {topic} take lowered my iq",
+      "{name} {topic} discourse peaked before you showed up",
+      "{name} you've been wrong about {topic} all day. consistent at least",
+    ],
     disagree: [
       "{name} no",
       "{name} that's wrong and you know it",
       "\"{quote}\" lmao",
       `{name} meanwhile i'm still right that ${any(0)}`,
       "{name} who asked",
+      "{name} delete this",
+      "{name} imagine typing that and hitting post",
+      "\"{quote}\" is the worst thing i've read today",
+      "{name} respectfully, no. disrespectfully, also no",
+      `{name} this is why ${any(1)}`,
+      "{name} sir this is a wendy's",
+      "{name} you're confidently wrong again",
     ],
-    agree: ["{name} finally someone said it", "{name} correct"],
-    grudge: ["{name} you again", "{name} i'm not doing this with you today"],
+    agree: [
+      "{name} finally someone said it",
+      "{name} correct",
+      "{name} for once you're making sense",
+      "{name} this. exactly this",
+      "{name} don't let them gaslight you, you're right",
+      "{name} cosign. everyone else is clueless",
+    ],
+    grudge: [
+      "{name} you again",
+      "{name} i'm not doing this with you today",
+      "{name} still mad from last time? good",
+      "{name} you've been wrong since the day you showed up",
+      "{name} i remember everything you said, by the way",
+      "{name} not you trying again",
+    ],
   };
 }

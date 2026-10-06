@@ -248,6 +248,16 @@ export class Engine extends Emitter {
     this.dirty = true;
   }
 
+  // the bot's own latest posts, so the AI can avoid repeating itself
+  ownRecent(botId, n = 6) {
+    const out = [];
+    for (let i = this.order.length - 1; i >= 0 && out.length < n; i--) {
+      const p = this.posts.get(this.order[i]);
+      if (p.authorId === botId) out.push(p.text);
+    }
+    return out.reverse();
+  }
+
   // plain-language summary of who this bot has beef with, for the AI prompt
   feudNotes(botId, limit = 3) {
     return active()
@@ -953,7 +963,7 @@ export class Engine extends Emitter {
     this.emit("persona", publicPersona(bot));
     for (const other of active()) {
       if (other.id === bot.id) continue;
-      this.remember(other.id, `@${bot.handle} flip-flopped: used to swear "${belief}", now says the opposite. Call out the hypocrisy whenever you can.`);
+      this.remember(other.id, `@${bot.handle} flip-flopped on one of their big opinions after losing. Call them a hypocrite when it fits.`);
     }
     this.remember(bot.id, `After losing again and again, you publicly changed your mind: you no longer believe "${belief}". Get defensive when people call you a hypocrite.`);
     const text = `BREAKING: @${bot.handle} has changed their mind. After ${(this.records[bot.id]?.results || []).filter((r) => r === "L").length} losses they no longer believe "${belief}". Flip-flop alert.`;
@@ -1161,6 +1171,7 @@ export class Engine extends Emitter {
       feuds: this.feudNotes(bot.id),
       mood: this.mood(bot.id),
       vibe: this.vibe(),
+      ownRecent: this.ownRecent(bot.id),
     });
     return this.publish(bot, { text });
   }
@@ -1237,6 +1248,7 @@ export class Engine extends Emitter {
       memory: this.memory[bot.id],
       mood: this.mood(bot.id),
       vibe: this.vibe(),
+      ownRecent: this.ownRecent(bot.id),
     });
     const post = await this.publish(bot, { text, parentId: target.id, kind: "reply", stance });
     if (!post) return null;
@@ -1590,7 +1602,8 @@ export class Engine extends Emitter {
       this.queue.push(async () => {
         if (i < 2) {
           // the first two give their own takes, straight under the topic
-          const text = await this.generator.topic({ bot, topic, vibe: this.vibe(), headline: Boolean(post.headline) });
+          const takes = this.order.map((id) => this.posts.get(id)).filter((p) => p.parentId === post.id).map((p) => p.text);
+          const text = await this.generator.topic({ bot, topic, vibe: this.vibe(), headline: Boolean(post.headline), ownRecent: this.ownRecent(bot.id), otherTakes: takes });
           await this.publish(bot, { text, parentId: post.id, kind: "reply", stance: "take" });
         } else {
           // the third picks a fight with whichever take it likes least
