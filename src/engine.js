@@ -20,7 +20,16 @@ const AUDIENCE = { id: "audience", handle: "the_audience", name: "The Audience",
 const JUDGE = { id: "judge", handle: "the_judge", name: "The Judge", avatar: "⚖️", color: "#7a5c00", system: true };
 const NEWS = { id: "newsdesk", handle: "banter_news", name: "BanterGPT News", avatar: "📰", color: "#b42318", system: true };
 const MOD = { id: "moderator", handle: "the_mod", name: "The Moderator", avatar: "🛡️", color: "#3b5bdb", system: true };
-const SYSTEM = { [AUDIENCE.id]: AUDIENCE, [JUDGE.id]: JUDGE, [NEWS.id]: NEWS, [MOD.id]: MOD };
+const DAILY = { id: "dailybanter", handle: "the_daily_banter", name: "The Daily Banter", avatar: "📰", color: "#1a1714", system: true };
+const SYSTEM = { [AUDIENCE.id]: AUDIENCE, [JUDGE.id]: JUDGE, [NEWS.id]: NEWS, [DAILY.id]: DAILY, [MOD.id]: MOD };
+
+// real news sources get their own accounts ("channels"), made the first time they post
+const FLAGS = [[/iltalehti|yle|helsingin|hs\.fi|ilta-sanomat|mtv/i, "🇫🇮"], [/bbc|guardian|sky/i, "🇬🇧"]];
+function channelFor(source) {
+  const slug = String(source).toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 20) || "news";
+  const flag = FLAGS.find(([re]) => re.test(source))?.[1] || "🗞️";
+  return { id: `news_${slug}`, handle: slug, name: source, avatar: flag, color: "#1d4ed8", system: true, channel: "headlines" };
+}
 const MOD_KINDS = new Set(["ban", "warn"]);
 
 // what a bot gets named and shamed for (never repeats what it actually said)
@@ -192,6 +201,7 @@ export class Engine extends Emitter {
     this.lastFlipAt = 0;
     this.lastDaily = null; // local date of the last Daily Banter edition (saved)
     this.headlinesSeen = []; // real headlines already argued about (saved)
+    this.channels = {}; // news sources' own accounts, made as they post (saved)
     this.lastHeadlineAt = 0;
     this.season = { number: 1, start: seasonStart(Date.now()) };
     this.champion = null; // last season's winner (wears the crown)
@@ -232,7 +242,12 @@ export class Engine extends Emitter {
   // ---------- state ----------
 
   author(id) {
-    return SYSTEM[id] || personaById[id];
+    return SYSTEM[id] || this.channels[id] || personaById[id];
+  }
+
+  // accounts that aren't bots: the audience, the Judge, the newsdesks, the Moderator, news sources
+  isSystem(id) {
+    return Boolean(SYSTEM[id] || this.channels[id]);
   }
 
   grudge(a, b) {
@@ -303,7 +318,7 @@ export class Engine extends Emitter {
       maxCustom: MAX_CUSTOM,
       comebackNeeded: this.comebackNeeded,
       audience: AUDIENCE,
-      system: SYSTEM,
+      system: { ...SYSTEM, ...this.channels },
       posts: this.order.map((id) => this.posts.get(id)),
       feuds: this.feuds(),
       records: this.publicRecords(),
@@ -932,7 +947,7 @@ export class Engine extends Emitter {
     if (edition.fight) lines.push(`Biggest fight: "${edition.fight.title}" (${edition.fight.clapbacks} clapbacks).`);
     if (edition.roast) lines.push(`Roast of the day: @${edition.roast.handle}.`);
     if (cancelled.length) lines.push(`Cancelled: ${cancelled.map((h) => "@" + h).join(", ")}.`);
-    const post = this.addPost({ authorId: NEWS.id, text: lines.join(" "), kind: "daily", extra: { edition } });
+    const post = this.addPost({ authorId: DAILY.id, text: lines.join(" "), kind: "daily", extra: { edition } });
     if (!post) return false;
     // the front page's stars react
     const stars = [...new Set([roast && roast.authorId, ...fighters])].filter((id) => id && personaById[id] && !personaById[id].retired).slice(0, 2);
@@ -945,7 +960,13 @@ export class Engine extends Emitter {
     this.headlinesSeen = [...this.headlinesSeen, title].slice(-300);
     this.lastHeadlineAt = Date.now();
     this.dirty = true;
-    return this.dropTopic(title, { auto: true, extra: { headline: true, source, link } });
+    // the source posts it under its own account
+    const channel = channelFor(source || "News");
+    if (!this.channels[channel.id]) {
+      this.channels[channel.id] = channel;
+      this.emit("channel", channel);
+    }
+    return this.dropTopic(title, { auto: true, authorId: channel.id, extra: { headline: true, source, link } });
   }
 
   // ---------- changing their minds ----------
@@ -1104,6 +1125,7 @@ export class Engine extends Emitter {
       lastFlipAt: 0,
       lastDaily: null,
       headlinesSeen: [],
+      channels: {},
       lastHeadlineAt: 0,
       lastAutoTopicAt: 0,
       lastCancelAt: Date.now(),
@@ -1207,6 +1229,7 @@ export class Engine extends Emitter {
       originalsOff: this.originalsOff,
       universe: this.universe,
       headlinesSeen: this.headlinesSeen,
+      channels: this.channels,
       lastHeadlineAt: this.lastHeadlineAt,
       champion: this.champion,
       hallOfFame: this.hallOfFame,
@@ -1251,6 +1274,7 @@ export class Engine extends Emitter {
     this.setOriginals(!data.originalsOff, { quiet: true });
     if (data.universe) this.universe = data.universe;
     this.headlinesSeen = data.headlinesSeen || [];
+    this.channels = data.channels || {};
     this.lastHeadlineAt = data.lastHeadlineAt || 0;
     for (const [id, list] of Object.entries(this.flips)) if (personaById[id]) personaById[id].flips = list;
     for (const [id, pun] of Object.entries(this.punishments)) if (personaById[id]) personaById[id].punishment = pun;
@@ -1378,7 +1402,7 @@ export class Engine extends Emitter {
   }
 
   decideStance(bot, authorId) {
-    if (SYSTEM[authorId]) return Math.random() < 0.75 ? "disagree" : "agree";
+    if (this.isSystem(authorId)) return Math.random() < 0.75 ? "disagree" : "agree";
     let pDisagree = 0.6;
     if (bot.rivals.includes(authorId)) pDisagree = 0.88;
     else if (bot.allies.includes(authorId)) pDisagree = 0.3;
@@ -1736,10 +1760,10 @@ export class Engine extends Emitter {
     return { votes: root.votes };
   }
 
-  dropTopic(topic, { auto = false, extra = {} } = {}) {
+  dropTopic(topic, { auto = false, extra = {}, authorId = null } = {}) {
     topic = censor(topic); // filter before the bots (or the AI prompt) ever see it
     const post = this.addPost({
-      authorId: auto ? NEWS.id : AUDIENCE.id,
+      authorId: authorId || (auto ? NEWS.id : AUDIENCE.id),
       text: topic,
       kind: "topic",
       extra: auto ? { auto: true, ...extra } : extra,
@@ -1763,7 +1787,7 @@ export class Engine extends Emitter {
           // the third picks a fight with whichever take it likes least
           const takes = this.order
             .map((id) => this.posts.get(id))
-            .filter((p) => p.rootId === post.id && p.authorId !== bot.id && !SYSTEM[p.authorId]);
+            .filter((p) => p.rootId === post.id && p.authorId !== bot.id && !this.isSystem(p.authorId));
           const target =
             takes.sort((a, b) => this.rivalry(bot, b.authorId) - this.rivalry(bot, a.authorId))[0] || post;
           await this.reply(bot, target);

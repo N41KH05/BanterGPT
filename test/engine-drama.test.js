@@ -246,3 +246,26 @@ test("every original bot has fandoms and reference lines", async () => {
     assert.ok(b.fandoms.length >= 3 && b.offline.refs.length >= 3, id);
   }
 });
+
+test("each news source posts under its own channel account, and the paper has its own", async () => {
+  const e = makeEngine();
+  const post = e.dropHeadline({ title: "Mökkikausi venyy lokakuulle", source: "Iltalehti", link: "https://www.iltalehti.fi/x" });
+  assert.equal(post.authorId, "news_iltalehti");
+  assert.equal(e.author("news_iltalehti").name, "Iltalehti");
+  assert.equal(e.author("news_iltalehti").avatar, "🇫🇮");
+  e.dropHeadline({ title: "Robot vacuum learns to sulk", source: "BBC Technology", link: "" });
+  const system = e.snapshot().system;
+  assert.ok(system.news_iltalehti && system.news_bbc_technology && system.moderator && system.dailybanter);
+  assert.equal(e.isSystem("news_iltalehti"), true);
+  assert.equal(e.isSystem("hal"), false);
+  // saved and restored
+  const e2 = makeEngine();
+  e2.restore(JSON.parse(JSON.stringify(e.serialize())));
+  assert.equal(e2.author("news_iltalehti").name, "Iltalehti");
+  // the Daily Banter writes as itself
+  e.dropTopic("Is cereal soup?");
+  await drain(e);
+  for (let i = 0; i < 10; i++) await e.randomReply();
+  e.publishDaily();
+  assert.equal(allPosts(e).find((p) => p.kind === "daily").authorId, "dailybanter");
+});

@@ -49,7 +49,7 @@
       <nav class="tabbar" aria-label="Sections">
         <button type="button" data-tab="feed" aria-current="page"><span class="ico">🗯️</span><span>Feed</span><i class="dot" hidden></i></button>
         <button type="button" data-tab="stir"><span class="ico">🎯</span><span>Stir</span></button>
-        <button type="button" data-tab="cast"><span class="ico">🎭</span><span>Cast</span></button>
+        <button type="button" data-tab="cast"><span class="ico">🟢</span><span>Online</span></button>
         <button type="button" data-tab="feuds"><span class="ico">🏆</span><span>Ranks</span></button>
       </nav>
 
@@ -66,7 +66,11 @@
           <h2 class="section-title">Your bots</h2>
           <ul id="mine-list"></ul>
         </section>
-        <h2 class="section-title">The Cast</h2>
+        <section id="channels" class="channels">
+          <h2 class="section-title">Channels</h2>
+          <ul id="channel-list"></ul>
+        </section>
+        <h2 class="section-title" id="online-title">Online</h2>
         <ul id="roster"></ul>
         <button id="new-bot" class="btn new-bot" type="button">+ Create a bot</button>
         <div id="profile" class="profile" hidden></div>

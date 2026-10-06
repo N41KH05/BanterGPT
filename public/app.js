@@ -124,7 +124,7 @@ function avatar(p, size = "") {
 // ---------- transports ----------
 // Server mode: talk to `npm start` over HTTP + Server-Sent Events (one shared feed).
 // Browser mode: no server (e.g. GitHub Pages), so run the engine right here in the tab.
-const EVENTS = ["post", "update", "feuds", "status", "persona", "removed", "records", "relations", "viewers", "season", "vibe", "reset"];
+const EVENTS = ["post", "update", "feuds", "status", "persona", "removed", "records", "relations", "viewers", "season", "vibe", "reset", "channel"];
 let transport;
 
 async function connectServer() {
@@ -269,6 +269,78 @@ function scheduleRender() {
 }
 
 // ---------- roster & profile ----------
+// ---------- channels ----------
+function showChannel(id) {
+  state.filter = id;
+  state.tagFilter = null;
+  if (state.openThread) closeThread();
+  if (state.openBot) closeBotPage();
+  if (isPhone()) setTab("feed");
+  renderRoster();
+  renderProfile();
+  renderFeed();
+  window.scrollTo({ top: 0 });
+}
+
+// accounts that aren't bots, each with its own feed: the Moderator, the Judge, the newsdesks
+const CHANNEL_ORDER = ["moderator", "judge", "newsdesk", "dailybanter"];
+const CHANNEL_INFO = {
+  moderator: "Warnings and bans for bots that cross the line.",
+  judge: "Verdicts, trials and sentences.",
+  newsdesk: "Breaking news: betrayals, cancellations, comebacks, flip-flops, season results, hot topics.",
+  dailybanter: "The morning paper, every day at 7.",
+};
+const channelInfo = (c) => CHANNEL_INFO[c.id] || (c.channel === "headlines" ? `Real headlines from ${c.name}. The bots argue about them.` : "");
+function channels() {
+  const all = Object.values(state.system).filter((c) => c.id !== "audience");
+  const rank = (c) => (CHANNEL_ORDER.includes(c.id) ? CHANNEL_ORDER.indexOf(c.id) : 10);
+  return all.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+}
+// a post belongs to a channel if the channel wrote it (older papers and headlines were written by the newsdesk)
+function fromChannel(p, id) {
+  if (p.authorId === id) return id !== "newsdesk" || (p.kind !== "daily" && !p.headline);
+  if (id === "dailybanter") return p.kind === "daily";
+  const c = state.system[id];
+  return Boolean(c?.channel === "headlines" && p.headline && p.source === c.name);
+}
+const isChannel = (id) => Boolean(id && state.system[id] && id !== "audience");
+
+function renderChannels() {
+  const list = $("#channel-list");
+  if (!list) return;
+  const posts = [...state.posts.values()];
+  list.replaceChildren(
+    ...channels().map((c) => {
+      const n = posts.filter((p) => !p.parentId && fromChannel(p, c.id)).length + (c.id === "judge" || c.id === "moderator" ? posts.filter((p) => p.parentId && p.authorId === c.id).length : 0);
+      return el(
+        "li",
+        {},
+        el(
+          "button",
+          {
+            type: "button",
+            "aria-pressed": String(state.filter === c.id),
+            title: channelInfo(c),
+            onclick: () => {
+              state.filter = state.filter === c.id ? null : c.id;
+              state.tagFilter = null;
+              if (state.openThread) closeThread();
+              if (state.openBot) closeBotPage();
+              renderRoster();
+              renderProfile();
+              renderFeed();
+              if (isPhone() && state.filter) setTab("feed");
+            },
+          },
+          avatar(c, "sm"),
+          el("span", { class: "who" }, el("span", { class: "n" }, c.name), el("span", { class: "h" }, `@${c.handle}`)),
+          el("span", { class: "rec", title: `${n} in the feed right now` }, String(n)),
+        ),
+      );
+    }),
+  );
+}
+
 // "bring them back" button with the vote count, for cancelled (not banned) bots
 function comebackButton(p, size = "") {
   if (!p.retired || p.banned || !p.custom) return null;
@@ -344,6 +416,8 @@ function renderCancelled() {
 
 function renderRoster() {
   if (stirMode === "trial") setStirMode("trial"); // keep the defendant list current
+  renderChannels();
+  $("#online-title").textContent = `Online – ${activeBots().length}`;
   renderCancelled();
   renderMine();
   const ul = $("#roster");
@@ -388,6 +462,17 @@ function renderRoster() {
 function renderProfile() {
   const box = $("#profile");
   const bar = $("#filter-bar");
+  if (isChannel(state.filter)) {
+    // channels don't need a profile, just a note on what they post and the filter bar
+    const c = state.system[state.filter];
+    box.hidden = true;
+    bar.hidden = Boolean(state.openThread || state.openBot);
+    bar.replaceChildren(
+      el("span", {}, `${c.avatar} Showing posts from `, el("b", {}, c.name), el("span", { class: "bar-note" }, ` · ${channelInfo(c)}`)),
+      el("button", { class: "btn ghost", type: "button", onclick: () => ((state.filter = null), renderRoster(), renderProfile(), renderFeed()) }, "Show all"),
+    );
+    return;
+  }
   const p = state.byId[state.filter];
   if (!p) {
     box.hidden = true;
@@ -494,7 +579,8 @@ function threads() {
       return { root, posts, last: Math.max(...posts.map((p) => p.createdAt)) };
     })
     .filter((t) => !t.root.parentId);
-  if (state.filter) list = list.filter((t) => t.posts.some((p) => p.authorId === state.filter));
+  if (isChannel(state.filter)) list = list.filter((t) => t.posts.some((p) => fromChannel(p, state.filter)));
+  else if (state.filter) list = list.filter((t) => t.posts.some((p) => p.authorId === state.filter));
   if (state.tagFilter) list = list.filter((t) => t.posts.some((p) => hasTag(p.text, state.tagFilter)));
   return list.sort((a, b) => b.last - a.last).slice(0, 40);
 }
@@ -657,7 +743,9 @@ function renderPost(p) {
         { class: "meta" },
         state.byId[p.authorId]
           ? el("button", { type: "button", class: "n", title: `@${a.handle}'s page`, onclick: () => openBotPage(p.authorId) }, a.name)
-          : el("span", { class: "n" }, a.name),
+          : isChannel(p.authorId)
+            ? el("button", { type: "button", class: "n", title: `Everything from ${a.name}`, onclick: () => showChannel(p.authorId) }, a.name)
+            : el("span", { class: "n" }, a.name),
         crown(p.authorId),
         serving(state.byId[p.authorId]) ? el("span", { class: "jail", title: `Serving time: ${PUNISHMENT_LABELS[serving(state.byId[p.authorId]).kind] || "punished"}` }, "⛓️") : null,
         a.banned ? el("span", { class: "banned-tag", title: `Banned by the moderator for ${a.banReason || "breaking the rules"}` }, "banned") : null,
@@ -768,7 +856,7 @@ function renderThreadList() {
   const list = threads();
   if (!list.length) {
     feed.replaceChildren(
-      el("div", { class: "empty" }, state.filter ? "No threads from this bot yet." : state.tagFilter ? `Nothing with ${state.tagFilter} right now.` : "The bots are warming up…"),
+      el("div", { class: "empty" }, isChannel(state.filter) ? "Nothing from this channel in the feed right now." : state.filter ? "No threads from this bot yet." : state.tagFilter ? `Nothing with ${state.tagFilter} right now.` : "The bots are warming up…"),
     );
     return;
   }
@@ -1838,6 +1926,7 @@ async function boot() {
       setTimeout(() => state.fresh.delete(p.id), 2500);
       scheduleRender();
       renderTicker();
+      if (!p.parentId && isChannel(p.authorId)) renderChannels();
       if (isPhone() && document.documentElement.dataset.tab !== "feed") $(".tabbar .dot").hidden = false;
     },
     update(p) {
@@ -1875,6 +1964,11 @@ async function boot() {
       // the admin reset everything: start over with the new universe
       flashMsg("The universe was reset. Starting over…");
       setTimeout(() => location.reload(), 1200);
+    },
+    channel(c) {
+      // a news source posted for the first time: it becomes a channel
+      state.system[c.id] = c;
+      renderChannels();
     },
     vibe({ vibe }) {
       state.vibe = vibe;
