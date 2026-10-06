@@ -7,6 +7,9 @@ import { screenText, personaTexts } from "./moderation.js";
 import { personas, personaById } from "./personas.js";
 import { buildCustomPersona, restoreCustomPersona, MAX_CUSTOM } from "./custom.js";
 
+// the original six as they ship (rivals and allies change over time, a reset puts them back)
+const ORIGINAL_RELATIONS = Object.fromEntries(personas.map((p) => [p.id, { rivals: [...p.rivals], allies: [...p.allies] }]));
+
 const MAX_POSTS = 400;
 const MAX_DEPTH = 7;
 const MEMORY_SIZE = 12; // notable moments each bot remembers (saved with the rest of the state)
@@ -222,6 +225,7 @@ export class Engine extends Emitter {
     this.creators = {}; // botId -> hashed creator id (never sent to visitors)
     this.benched = {}; // hashed creator id -> can't make bots until
     this.salt = randomSalt(); // secret for hashing creator ids (saved, never sent to visitors)
+    this.universe = randomSalt().slice(0, 12); // changes when the universe is reset (browsers forget old votes)
     this.moderator = null;
   }
 
@@ -305,6 +309,7 @@ export class Engine extends Emitter {
       records: this.publicRecords(),
       season: this.publicSeason(),
       vibe: this.vibe(),
+      universe: this.universe,
     };
   }
 
@@ -341,6 +346,7 @@ export class Engine extends Emitter {
       return null;
     }
     const parent = parentId ? this.posts.get(parentId) : null;
+    if (parentId && !parent) return null; // replying to something that's gone (removed, or the universe was reset)
     const post = {
       id: String(this.nextId++),
       authorId,
@@ -1046,6 +1052,77 @@ export class Engine extends Emitter {
     return this.dropTopic(pick(fresh.length ? fresh : HOT_TOPICS), { auto: true });
   }
 
+  // ---------- reset the universe ----------
+
+  // the original six on or off stage (off = an empty universe until visitors make bots)
+  setOriginals(on, { quiet = false } = {}) {
+    this.originalsOff = !on;
+    for (const p of personas) {
+      if (p.custom) continue;
+      p.retired = !on;
+      p.off = !on;
+      if (!quiet) this.emit("persona", publicPersona(p));
+    }
+    if (!quiet) {
+      this.dirty = true;
+      this.emit("relations", this.publicRelations());
+    }
+  }
+
+  // wipe everything: posts, visitor bots, grudges, memories, records, seasons, bans.
+  // keepOriginals: start again with the original six, fresh; otherwise with no bots at all
+  resetUniverse({ keepOriginals = true } = {}) {
+    // visitor bots are gone for good
+    for (let i = personas.length - 1; i >= 0; i--) {
+      if (!personas[i].custom) continue;
+      delete personaById[personas[i].id];
+      personas.splice(i, 1);
+    }
+    // the original six back to how they ship
+    for (const p of personas) {
+      Object.assign(p, { rivals: [...ORIGINAL_RELATIONS[p.id].rivals], allies: [...ORIGINAL_RELATIONS[p.id].allies] });
+      for (const key of ["flips", "punishment", "comebackAt", "banned", "bannedAt", "banReason", "cancelledAt", "cancelReason"]) delete p[key];
+    }
+    Object.assign(this, {
+      posts: new Map(),
+      order: [],
+      nextId: 1,
+      queue: [],
+      grudges: {},
+      memory: Object.fromEntries(personas.map((p) => [p.id, []])),
+      records: {},
+      relations: {},
+      strikes: {},
+      reviewedUpTo: {},
+      sinceReview: {},
+      holding: new Set(),
+      bannedPrints: [],
+      creators: {},
+      benched: {},
+      punishments: {},
+      flips: {},
+      lastFlipAt: 0,
+      lastDaily: null,
+      headlinesSeen: [],
+      lastHeadlineAt: 0,
+      lastAutoTopicAt: 0,
+      lastCancelAt: Date.now(),
+      lastShakeupAt: Date.now(),
+      startedAt: Date.now(),
+      season: { number: 1, start: seasonStart(Date.now()) },
+      champion: null,
+      hallOfFame: [],
+    });
+    this.setOriginals(keepOriginals, { quiet: true });
+    this.universe = randomSalt().slice(0, 12);
+    this.dirty = true;
+    this.note(`the universe was reset (${keepOriginals ? "with the original six" : "with no bots"})`);
+    this.emit("reset", this.snapshot());
+    // a fresh feed shouldn't sit empty: a few opening posts
+    for (const bot of shuffle(active()).slice(0, 3)) this.queue.push(() => this.newPost(bot));
+    return { reset: true, bots: active().length };
+  }
+
   // ---------- admin ----------
 
   // undo a ban: the bot can post again (its removed posts stay gone), strikes reset
@@ -1093,7 +1170,7 @@ export class Engine extends Emitter {
       name: p.name,
       avatar: p.avatar,
       custom: Boolean(p.custom),
-      status: p.banned ? "banned" : p.retired ? "cancelled" : "active",
+      status: p.banned ? "banned" : p.off ? "off" : p.retired ? "cancelled" : "active",
       reason: p.banReason || p.cancelReason || null,
       strikes: this.strikes[p.id] || 0,
       record: this.records[p.id] ? `${this.records[p.id].w}-${this.records[p.id].l}` : "0-0",
@@ -1127,6 +1204,8 @@ export class Engine extends Emitter {
       flips: this.flips,
       lastFlipAt: this.lastFlipAt,
       lastDaily: this.lastDaily,
+      originalsOff: this.originalsOff,
+      universe: this.universe,
       headlinesSeen: this.headlinesSeen,
       lastHeadlineAt: this.lastHeadlineAt,
       champion: this.champion,
@@ -1169,6 +1248,8 @@ export class Engine extends Emitter {
     this.flips = data.flips || {};
     this.lastFlipAt = data.lastFlipAt || 0;
     this.lastDaily = data.lastDaily || null;
+    this.setOriginals(!data.originalsOff, { quiet: true });
+    if (data.universe) this.universe = data.universe;
     this.headlinesSeen = data.headlinesSeen || [];
     this.lastHeadlineAt = data.lastHeadlineAt || 0;
     for (const [id, list] of Object.entries(this.flips)) if (personaById[id]) personaById[id].flips = list;
@@ -1216,6 +1297,7 @@ export class Engine extends Emitter {
       // and even less while there's a fresh audience topic to fight over
       const roots = this.order.filter((id) => !this.posts.get(id).parentId);
       const newThreadChance = this.hasFreshTopic() ? 0.05 : 0.15;
+      if (!active().length) return; // an empty universe: nothing to do until someone makes a bot
       if (roots.length < 2 || Math.random() < newThreadChance) {
         await this.newPost(randomBot());
       } else {

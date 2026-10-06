@@ -64,3 +64,9 @@ body.admin { min-height: 100vh; }
   .row .acts { grid-column: 1 / -1; justify-content: flex-start; }
   .search { width: 100%; }
 }
+
+/* danger zone */
+.danger-zone { border-color: var(--accent); box-shadow: 4px 4px 0 var(--accent); }
+.danger-zone p { margin: 0 0 10px; font-size: 14px; }
+.danger-btn { background: var(--accent); border-color: var(--accent); color: #fff; }
+.badge.off { border-style: dotted; }

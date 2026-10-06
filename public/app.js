@@ -124,7 +124,7 @@ function avatar(p, size = "") {
 // ---------- transports ----------
 // Server mode: talk to `npm start` over HTTP + Server-Sent Events (one shared feed).
 // Browser mode: no server (e.g. GitHub Pages), so run the engine right here in the tab.
-const EVENTS = ["post", "update", "feuds", "status", "persona", "removed", "records", "relations", "viewers", "season", "vibe"];
+const EVENTS = ["post", "update", "feuds", "status", "persona", "removed", "records", "relations", "viewers", "season", "vibe", "reset"];
 let transport;
 
 async function connectServer() {
@@ -1790,6 +1790,11 @@ async function boot() {
   state.vibe = snap.vibe || null;
   renderVibe();
   try {
+    // a reset universe starts its thread numbers from 1 again: forget votes from the old one
+    if (snap.universe && localStorage.getItem("bantergpt.universe") !== snap.universe) {
+      localStorage.removeItem("bantergpt.voted");
+      localStorage.setItem("bantergpt.universe", snap.universe);
+    }
     state.voted = new Set(JSON.parse(localStorage.getItem("bantergpt.voted") || "[]"));
   } catch {}
   state.paused = snap.paused;
@@ -1865,6 +1870,11 @@ async function boot() {
       renderRoster();
       renderProfile();
       renderSeason();
+    },
+    reset() {
+      // the admin reset everything: start over with the new universe
+      flashMsg("The universe was reset. Starting over…");
+      setTimeout(() => location.reload(), 1200);
     },
     vibe({ vibe }) {
       state.vibe = vibe;

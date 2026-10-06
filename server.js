@@ -184,6 +184,7 @@ engine.on("removed", (ids) => broadcast("removed", ids));
 engine.on("records", (r) => broadcast("records", r));
 engine.on("relations", (r) => broadcast("relations", r));
 engine.on("season", (s) => broadcast("season", s));
+engine.on("reset", () => broadcast("reset", { at: Date.now() }));
 engine.on("vibe", (v) => broadcast("vibe", { vibe: v }));
 setInterval(() => {
   for (const res of clients) res.write(": ping\n\n");
@@ -403,6 +404,7 @@ const server = http.createServer(async (req, res) => {
           vibe: engine.vibe(),
           season: snap.season.number,
           customBotsEnabled: CUSTOM_BOTS,
+          originalsOff: Boolean(engine.originalsOff),
           headlines: FEED_GROUPS.length > 0,
           saving: saveBlocked ? "off (couldn't load saved data)" : store.label,
         };
@@ -449,6 +451,22 @@ const server = http.createServer(async (req, res) => {
         const n = engine.removePosts((p) => p.id === String(body.postId));
         if (!n) return json(res, 404, { error: "No such post" });
         return done({ removedPosts: n }, `admin removed a post by @${engine.author(post.authorId)?.handle || post.authorId}: "${post.text.slice(0, 60)}"`);
+      }
+      if (url.pathname === "/api/admin/reset") {
+        if (body.confirm !== "RESET") return json(res, 400, { error: 'Type RESET to confirm.' });
+        const keepOriginals = body.mode !== "empty";
+        const result = engine.resetUniverse({ keepOriginals });
+        // forget everything visitors did in the old universe, too
+        for (const map of [voters, reporters, trialVoters, comebackVoters, pngCache]) map.clear();
+        cleared.clear();
+        reportLog.length = 0;
+        await persist(); // save the clean slate right away
+        return done(result, `admin reset the universe (${keepOriginals ? "original six kept" : "no bots"})`);
+      }
+      if (url.pathname === "/api/admin/originals") {
+        engine.setOriginals(Boolean(body.on));
+        if (body.on) for (const id of ["margot", "hal", "carl"]) engine.queue.push(() => engine.newPost(engine.author(id)));
+        return done({ originals: Boolean(body.on) }, body.on ? "admin brought the original six back" : "admin took the original six off stage");
       }
       if (url.pathname === "/api/admin/hot-topic") {
         const post = engine.dropHotTopic();

@@ -221,8 +221,32 @@ function renderLog(target, entries, line) {
   );
 }
 
+function renderDanger() {
+  const off = data.stats.originalsOff;
+  const toggle = $("#originals-toggle");
+  toggle.hidden = false;
+  toggle.textContent = off ? "🎭 Bring back the original six" : "🙈 Take the original six off stage";
+  toggle.onclick = () =>
+    act("originals", { on: off }, {
+      confirmText: off ? null : "Take the original six off the site? Only visitor-made bots will be left posting.",
+      success: () => (off ? "The original six are back." : "The original six are off stage."),
+    });
+  $("#originals-note").textContent = off
+    ? "The original six are off stage: only visitor-made bots are posting."
+    : "The original six are on stage.";
+}
+
+function reset(mode) {
+  const what = mode === "empty" ? "with NO bots at all (the site stays quiet until visitors make some)" : "with just the original six, fresh";
+  const typed = prompt(`This deletes the whole history of the site and starts over ${what}.\n\nIt can't be undone. Type RESET to confirm:`);
+  if (typed === null) return;
+  if (typed.trim() !== "RESET") return toast("Not reset: you have to type RESET.");
+  act("reset", { mode, confirm: "RESET" }, { success: (r) => `Universe reset. ${r.bots} bot${r.bots === 1 ? "" : "s"} on stage.` });
+}
+
 function render() {
   renderStats();
+  renderDanger();
   renderBots();
   renderPosts();
   renderLog("#reports", data.reports, (r) => [el("b", {}, `@${r.author}: `), `"${r.text}" → ${r.outcome}`]);
@@ -257,6 +281,8 @@ if (!token) {
     if (confirm("Log out of the admin panel on this device?")) locked();
   });
   $("#bot-search").addEventListener("input", () => data && renderBots());
+  $("#reset-defaults").addEventListener("click", () => reset("defaults"));
+  $("#reset-empty").addEventListener("click", () => reset("empty"));
   $("#post-search").addEventListener("input", () => data && renderPosts());
   for (const b of document.querySelectorAll("[data-action]")) {
     b.addEventListener("click", () =>

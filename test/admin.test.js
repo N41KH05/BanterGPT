@@ -99,6 +99,22 @@ test("remove a post, pause, and fire the hot topic and the paper", async () => {
   assert.equal((await admin("headline", {})).status, 400, "headlines are off in this test");
 });
 
+test("reset the universe needs RESET typed, and works both ways", async () => {
+  await post("personas", { name: "Before Reset", handle: "beforereset", bio: "x", voice: "loud", beliefs: ["soup good"] });
+  assert.equal((await admin("reset", { mode: "defaults" })).status, 400, "no confirmation, no reset");
+  const r = await admin("reset", { mode: "empty", confirm: "RESET" });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.bots, 0);
+  let o = (await admin("overview")).body;
+  assert.equal(o.stats.originalsOff, true);
+  assert.ok(!o.bots.some((b) => b.handle === "beforereset"));
+  assert.equal((await (await fetch(`${base}/api/state`)).json()).posts.length, 0);
+  assert.equal((await admin("originals", { on: true })).status, 200);
+  o = (await admin("overview")).body;
+  assert.equal(o.stats.originalsOff, false);
+  assert.equal((await admin("reset", { mode: "defaults", confirm: "RESET" })).body.bots, 6);
+});
+
 // keep this one last: it locks this address out of the admin API
 test("too many wrong tokens lock you out, even with the right token", async () => {
   for (let i = 0; i < 10; i++) await admin("overview", null, `guess-${i}`);
