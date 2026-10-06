@@ -104,10 +104,13 @@ if (live) {
 const headlines = await import("./src/headlines.js");
 const FEED_GROUPS = headlines.parseFeedSetting(process.env.BANTER_NEWS_FEEDS);
 const HEADLINE_MS = minutes("BANTER_HEADLINE_MINUTES", 90);
-async function maybeHeadline() {
-  if (!FEED_GROUPS.length || !clients.size || engine.paused) return;
-  if (!engine.lastHeadlineAt) engine.lastHeadlineAt = Date.now() - HEADLINE_MS + Math.min(10 * 60_000, HEADLINE_MS); // first one ~10 minutes in
-  if (Date.now() - engine.lastHeadlineAt < HEADLINE_MS) return;
+async function maybeHeadline({ force = false } = {}) {
+  if (!FEED_GROUPS.length) return null;
+  if (!force) {
+    if (!clients.size || engine.paused) return null;
+    if (!engine.lastHeadlineAt) engine.lastHeadlineAt = Date.now() - HEADLINE_MS + Math.min(10 * 60_000, HEADLINE_MS); // first one ~10 minutes in
+    if (Date.now() - engine.lastHeadlineAt < HEADLINE_MS) return null;
+  }
   const seen = new Set(engine.headlinesSeen);
   // groups take turns (Finnish news, English news): a random one gets the first shot
   for (const group of [...FEED_GROUPS].sort(() => Math.random() - 0.5)) {
@@ -119,10 +122,11 @@ async function maybeHeadline() {
       }
       engine.dropHeadline(h);
       console.log(`[headlines] dropped (${h.source}): ${h.title}`);
-      return;
+      return h.title;
     }
   }
-  engine.lastHeadlineAt = Date.now() - HEADLINE_MS + 15 * 60_000; // nothing suitable: try again in 15 minutes
+  if (!force) engine.lastHeadlineAt = Date.now() - HEADLINE_MS + 15 * 60_000; // nothing suitable: try again in 15 minutes
+  return null;
 }
 setInterval(() => maybeHeadline().catch((err) => console.warn(`[headlines] ${err.message}`)), Math.min(5 * 60_000, HEADLINE_MS)).unref();
 
@@ -237,7 +241,7 @@ const REPORTS_TO_HIDE = 3; // without an AI, this many separate reports take a p
 // forget visitors we haven't seen for a while so these maps don't grow forever
 setInterval(() => {
   const cutoff = Date.now() - 15 * 60_000;
-  for (const map of [hits, botsMade, reports]) {
+  for (const map of [hits, botsMade, reports, adminFails]) {
     for (const [ip, times] of map) if (!times.some((t) => t > cutoff)) map.delete(ip);
   }
 }, 10 * 60_000).unref();
@@ -321,6 +325,35 @@ async function sharePage(req, id) {
   return html;
 }
 
+// ---------- admin ----------
+// The panel lives at /admin and only works when opened as /admin#<BANTER_ADMIN_TOKEN> (the part
+// after # never reaches the server or its logs). Every admin request carries the token.
+const adminFails = new Map(); // ip -> timestamps of wrong tokens
+function isAdmin(req) {
+  if (!ADMIN_TOKEN) return false;
+  const ip = clientIp(req);
+  const now = Date.now();
+  const fails = (adminFails.get(ip) || []).filter((t) => now - t < 15 * 60_000);
+  if (fails.length >= 10) return false; // too many wrong guesses: locked out for a while
+  const given = Buffer.from(String(req.headers["x-admin-token"] || ""));
+  const real = Buffer.from(ADMIN_TOKEN);
+  const ok = given.length === real.length && crypto.timingSafeEqual(given, real);
+  if (!ok) adminFails.set(ip, [...fails, now]);
+  return ok;
+}
+// what happened lately, for the panel (moderation, reports, admin actions)
+const modLog = [];
+const reportLog = [];
+const remember = (list, entry, max = 150) => {
+  list.unshift({ at: Date.now(), ...entry });
+  if (list.length > max) list.length = max;
+};
+engine.on("modlog", (e) => remember(modLog, { text: e.text }));
+const findBot = (body) => {
+  const handle = String(body.handle || "").replace(/^@/, "").toLowerCase();
+  return engine.snapshot().personas.find((p) => p.id === body.botId || p.handle.toLowerCase() === handle);
+};
+
 // ---------- routes ----------
 const server = http.createServer(async (req, res) => {
   let url;
@@ -351,50 +384,84 @@ const server = http.createServer(async (req, res) => {
     }
 
     // admin removal, enabled by setting BANTER_ADMIN_TOKEN (send it in the x-admin-token header)
-    if (req.method === "GET" && url.pathname === "/api/admin/stats") {
-      if (!ADMIN_TOKEN || req.headers["x-admin-token"] !== ADMIN_TOKEN) return json(res, 404, { error: "Not found" });
-      const snap = engine.snapshot();
-      return json(res, 200, {
-        mode: live ? "live" : "offline",
-        ai: live ? llm.usageStats() : null,
-        viewers: clients.size,
-        posts: engine.order.length,
-        activeBots: snap.personas.filter((p) => !p.retired).length,
-        visitorBots: snap.personas.filter((p) => p.custom && !p.retired).length,
-        bannedBots: snap.personas.filter((p) => p.banned).length,
-        cancelledBots: snap.personas.filter((p) => p.custom && p.retired && !p.banned).length,
-        strikes: engine.strikes,
-        vibe: engine.vibe(),
-        season: snap.season.number,
-      });
-    }
-    if (req.method === "POST" && url.pathname.startsWith("/api/admin/")) {
-      if (!ADMIN_TOKEN || req.headers["x-admin-token"] !== ADMIN_TOKEN) return json(res, 404, { error: "Not found" });
+    if (url.pathname.startsWith("/api/admin/")) {
+      if (!isAdmin(req)) return json(res, 404, { error: "Not found" });
+      const stats = () => {
+        const snap = engine.snapshot();
+        return {
+          mode: live ? "live" : "offline",
+          model: live ? generator.model : null,
+          ai: live ? llm.usageStats() : null,
+          paused: engine.paused,
+          viewers: clients.size,
+          posts: engine.order.length,
+          activeBots: snap.personas.filter((p) => !p.retired).length,
+          visitorBots: snap.personas.filter((p) => p.custom && !p.retired).length,
+          bannedBots: snap.personas.filter((p) => p.banned).length,
+          cancelledBots: snap.personas.filter((p) => p.custom && p.retired && !p.banned).length,
+          strikes: engine.strikes,
+          vibe: engine.vibe(),
+          season: snap.season.number,
+          customBotsEnabled: CUSTOM_BOTS,
+          headlines: FEED_GROUPS.length > 0,
+          saving: saveBlocked ? "off (couldn't load saved data)" : store.label,
+        };
+      };
+      if (req.method === "GET" && url.pathname === "/api/admin/stats") return json(res, 200, stats());
+      if (req.method === "GET" && url.pathname === "/api/admin/overview") {
+        const posts = engine.order
+          .slice(-120)
+          .reverse()
+          .map((id) => engine.posts.get(id))
+          .map((p) => ({ id: p.id, rootId: p.rootId, kind: p.kind, text: p.text, createdAt: p.createdAt, author: engine.author(p.authorId)?.handle || p.authorId, authorId: p.authorId, likes: p.likes, cheers: p.cheers }));
+        return json(res, 200, { stats: stats(), bots: engine.adminBots(), posts, modLog, reports: reportLog });
+      }
+      if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
       const body = await readBody(req);
+      const done = (result, note) => {
+        if (!result.error && note) remember(modLog, { text: note });
+        return json(res, result.error ? 400 : 200, result);
+      };
       if (url.pathname === "/api/admin/remove-bot") {
-        const handle = String(body.handle || "").replace(/^@/, "").toLowerCase();
-        const bot = engine.snapshot().personas.find((p) => p.id === body.botId || p.handle.toLowerCase() === handle);
+        const bot = findBot(body);
         if (!bot || !bot.custom) return json(res, 404, { error: "No visitor-made bot with that handle" });
         engine.removePersona(bot.id);
-        return json(res, 200, { removed: `@${bot.handle}` });
+        return done({ removed: `@${bot.handle}` }, `admin deleted @${bot.handle} and everything it posted`);
       }
       if (url.pathname === "/api/admin/ban") {
         // public ban with a shaming post (remove-bot deletes quietly instead)
-        const handle = String(body.handle || "").replace(/^@/, "").toLowerCase();
-        const bot = engine.snapshot().personas.find((p) => p.id === body.botId || p.handle.toLowerCase() === handle);
+        const bot = findBot(body);
         if (!bot || !bot.custom) return json(res, 404, { error: "No visitor-made bot with that handle" });
         if (bot.banned) return json(res, 200, { banned: `@${bot.handle}`, already: true });
         await engine.handleViolation(engine.author(bot.id), String(body.reason || "admin"), { force: true, held: true });
-        return json(res, 200, { banned: `@${bot.handle}` });
+        return done({ banned: `@${bot.handle}` }, `admin banned @${bot.handle}`);
       }
+      if (url.pathname === "/api/admin/unban") return done(engine.unban(findBot(body)?.id));
+      if (url.pathname === "/api/admin/revive") return done(engine.revive(findBot(body)?.id));
+      if (url.pathname === "/api/admin/clear-strikes") return done(engine.clearStrikes(findBot(body)?.id));
       if (url.pathname === "/api/admin/pause") {
         // site-wide pause: stops the bots for everyone (visitors' Pause button only freezes their own screen)
         engine.setPaused(Boolean(body.paused));
-        return json(res, 200, { paused: engine.paused });
+        return done({ paused: engine.paused }, engine.paused ? "admin paused the site" : "admin resumed the site");
       }
       if (url.pathname === "/api/admin/remove-post") {
+        const post = engine.posts.get(String(body.postId));
         const n = engine.removePosts((p) => p.id === String(body.postId));
-        return json(res, n ? 200 : 404, n ? { removedPosts: n } : { error: "No such post" });
+        if (!n) return json(res, 404, { error: "No such post" });
+        return done({ removedPosts: n }, `admin removed a post by @${engine.author(post.authorId)?.handle || post.authorId}: "${post.text.slice(0, 60)}"`);
+      }
+      if (url.pathname === "/api/admin/hot-topic") {
+        const post = engine.dropHotTopic();
+        return done(post ? { post } : { error: "Couldn't post it" }, post && `admin dropped a hot topic: ${post.text}`);
+      }
+      if (url.pathname === "/api/admin/daily") {
+        const ok = engine.publishDaily();
+        return done(ok ? { published: true } : { error: "Nothing happened in the last 24 hours to write about." }, "admin published the Daily Banter");
+      }
+      if (url.pathname === "/api/admin/headline") {
+        if (!FEED_GROUPS.length) return json(res, 400, { error: "Headlines are switched off (BANTER_NEWS_FEEDS=off)." });
+        const posted = await maybeHeadline({ force: true });
+        return done(posted ? { headline: posted } : { error: "No suitable headline right now (everything was filtered out or the feeds failed)." }, posted && `admin dropped a headline: ${posted}`);
       }
       return json(res, 404, { error: "Not found" });
     }
@@ -501,6 +568,7 @@ const server = http.createServer(async (req, res) => {
           if (!review.allowed && review.reason !== "couldn't be checked right now") {
             const reason = review.refused ? "hate" : review.reason;
             console.log(`[moderation] report upheld on post ${postId} by ${post.authorId}: ${reason}`);
+            remember(reportLog, { postId, author: engine.author(post.authorId)?.handle, text: post.text.slice(0, 120), outcome: `removed (${reason})` });
             // a refusal takes the post down without a strike
             if (review.refused) engine.removePosts((p) => p.id === postId);
             else await engine.upholdReport(postId, reason);
@@ -509,6 +577,7 @@ const server = http.createServer(async (req, res) => {
           if (review.allowed) {
             cleared.add(postId);
             console.log(`[moderation] report rejected on post ${postId}`);
+            remember(reportLog, { postId, author: engine.author(post.authorId)?.handle, text: post.text.slice(0, 120), outcome: "kept (AI: allowed)" });
             return json(res, 200, { removed: false, message: "The moderator checked it. Edgy, but allowed. It stays." });
           }
         }
@@ -516,8 +585,10 @@ const server = http.createServer(async (req, res) => {
         if (seen.size >= REPORTS_TO_HIDE && !cleared.has(postId)) {
           engine.removePosts((p) => p.id === postId);
           console.log(`[moderation] post ${postId} hidden after ${seen.size} reports`);
+          remember(reportLog, { postId, author: engine.author(post.authorId)?.handle, text: post.text.slice(0, 120), outcome: `removed (${seen.size} reports)` });
           return json(res, 200, { removed: true, message: "Enough people reported it. It's gone." });
         }
+        if (!cleared.has(postId)) remember(reportLog, { postId, author: engine.author(post.authorId)?.handle, text: post.text.slice(0, 120), outcome: `reported (${seen.size} so far)` });
         return json(res, 200, { removed: false, message: cleared.has(postId) ? "The moderator already checked this one. It stays." : "Thanks. Reported." });
       }
       if (url.pathname === "/api/review") {
@@ -571,6 +642,12 @@ const server = http.createServer(async (req, res) => {
         return json(res, p ? 200 : 404, p || { error: "Unknown post" });
       }
       return json(res, 404, { error: "Not found" });
+    }
+
+    // the admin panel (useless without the token, which only the secret link carries)
+    if (req.method === "GET" && /^\/admin\/?$/.test(url.pathname)) {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex, nofollow", "referrer-policy": "no-referrer" });
+      return res.end(await readFile(path.join(__dirname, "public", "admin.html")));
     }
 
     // shareable thread links: the page, with link-preview tags for that thread

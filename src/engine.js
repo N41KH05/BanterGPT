@@ -337,7 +337,7 @@ export class Engine extends Emitter {
     // last line of defence: a bot post that touches race, religion etc. never reaches the feed
     // (the moderator is exempt: its announcements name the offence, like "racism")
     if (authorId !== AUDIENCE.id && authorId !== MOD.id && screenText(text)) {
-      console.warn(`[moderation] dropped a post by ${authorId}`);
+      this.note(`dropped a post by ${authorId}`);
       return null;
     }
     const parent = parentId ? this.posts.get(parentId) : null;
@@ -460,7 +460,7 @@ export class Engine extends Emitter {
     if (useAI) {
       const review = await this.reviewPost(bot, text);
       if (review.refused) {
-        console.warn(`[moderation] dropped a post by @${bot.handle} (the AI refused to review it)`);
+        this.note(`dropped a post by @${bot.handle} (the AI refused to review it)`);
         return null;
       }
       if (!review.allowed) {
@@ -468,18 +468,18 @@ export class Engine extends Emitter {
         confirmed = true;
       } else if (keyword) {
         // keyword rules are blunt ("a chink in your armour", "race you there"): no strike, but don't post it
-        console.warn(`[moderation] dropped a post by @${bot.handle} (keyword match, AI saw no hate)`);
+        this.note(`dropped a post by @${bot.handle} (keyword match, AI saw no hate)`);
         return null;
       }
     } else if (keyword === "slur") {
       violation = "slur"; // without an AI only slurs count as strikes...
     } else if (keyword) {
-      console.warn(`[moderation] dropped a post by @${bot.handle} (keyword match)`); // ...other matches are just dropped
+      this.note(`dropped a post by @${bot.handle} (keyword match)`); // ...other matches are just dropped
       return null;
     }
     if (violation) {
       if (bot.custom) await this.handleViolation(bot, violation, { force: confirmed && violation === "slur" });
-      else console.warn(`[moderation] dropped a post by @${bot.handle}`);
+      else this.note(`dropped a post by @${bot.handle}`);
       return null;
     }
     if (bot.retired || this.holding.has(bot.id)) return null; // banned or under review while the AI was checking
@@ -490,7 +490,7 @@ export class Engine extends Emitter {
       this.sinceReview[bot.id] = (this.sinceReview[bot.id] || 0) + 1;
       if (this.sinceReview[bot.id] >= HISTORY_EVERY) {
         this.sinceReview[bot.id] = 0;
-        this.checkHistory(bot).catch((err) => console.warn(`[moderation] history check failed: ${err.message}`));
+        this.checkHistory(bot).catch((err) => this.note(`history check failed: ${err.message}`));
       }
     }
     return post;
@@ -513,7 +513,7 @@ export class Engine extends Emitter {
     try {
       const review = await this.reviewHistory(bot, mine.map((p) => p.text));
       // the AI refusing to even read a bot's combined history counts against the bot
-      if (review.refused) console.warn(`[moderation] the AI refused to review @${bot.handle}'s history`);
+      if (review.refused) this.note(`the AI refused to review @${bot.handle}'s history`);
       if (review.allowed) {
         this.reviewedUpTo[bot.id] = Math.max(0, ...mine.map((p) => Number(p.id)));
         this.dirty = true;
@@ -524,7 +524,7 @@ export class Engine extends Emitter {
         this.removePosts((p) => ids.has(p.id));
         this.reviewedUpTo[bot.id] = this.nextId - 1;
         this.dirty = true;
-        console.log(`[moderation] removed posts by retired bot @${bot.handle} (${review.reason})`);
+        this.note(`removed posts by retired bot @${bot.handle} (${review.reason})`);
         return true;
       }
       release = false; // handleViolation takes over the hold
@@ -558,7 +558,7 @@ export class Engine extends Emitter {
           const d = await this.moderator({ bot, offence, strikes, maxStrikes: MAX_STRIKES });
           if (d && (d.action === "ban" || d.action === "warn")) decision = d;
         } catch (err) {
-          console.warn(`[moderation] AI moderator failed: ${err.message}`);
+          this.note(`AI moderator failed: ${err.message}`);
         }
       }
       // the AI can be harsher than the rules, never softer
@@ -566,7 +566,7 @@ export class Engine extends Emitter {
       if (bot.banned) return; // another check got there first
 
       const text = this.modText(decision, bot, offence);
-      console.log(`[moderation] ${decision.action === "ban" ? "banned" : "warned"} @${bot.handle} (${offence}, strike ${strikes})`);
+      this.note(`${decision.action === "ban" ? "banned" : "warned"} @${bot.handle} (${offence}, strike ${strikes})`);
       // pick who reacts before the ban changes everyone's relationships
       const reactors = shuffle(active().filter((p) => p.id !== bot.id))
         .sort((a, b) => this.rivalry(b, bot.id) - this.rivalry(a, bot.id))
@@ -1033,6 +1033,80 @@ export class Engine extends Emitter {
     return Boolean(creator && (this.benched[creator] || 0) > Date.now());
   }
 
+  // moderation events: printed to the server log and kept for the admin panel
+  note(text) {
+    console.log(`[moderation] ${text}`);
+    this.emit("modlog", { at: Date.now(), text });
+  }
+
+  // a hot topic of the hour that hasn't come up lately
+  dropHotTopic() {
+    const recent = new Set(this.order.map((id) => this.posts.get(id)).filter((p) => p.auto).map((p) => p.text));
+    const fresh = HOT_TOPICS.filter((t) => !recent.has(t));
+    return this.dropTopic(pick(fresh.length ? fresh : HOT_TOPICS), { auto: true });
+  }
+
+  // ---------- admin ----------
+
+  // undo a ban: the bot can post again (its removed posts stay gone), strikes reset
+  unban(botId) {
+    const bot = personaById[botId];
+    if (!bot || !bot.banned) return { error: "That bot isn't banned." };
+    Object.assign(bot, { banned: false, retired: false, bannedAt: undefined, banReason: undefined });
+    this.holding.delete(bot.id);
+    delete this.strikes[bot.id];
+    const print = fingerprint(bot).join(" ");
+    this.bannedPrints = this.bannedPrints.filter((p) => p.join(" ") !== print);
+    const creator = this.creators[bot.id];
+    if (creator) delete this.benched[creator];
+    this.linkRelations(bot);
+    this.dirty = true;
+    this.note(`admin unbanned @${bot.handle}`);
+    this.emit("persona", publicPersona(bot));
+    this.emit("relations", this.publicRelations());
+    return { unbanned: `@${bot.handle}` };
+  }
+
+  // bring a cancelled bot straight back (a comeback arc without the votes)
+  revive(botId) {
+    const bot = personaById[botId];
+    if (!bot || !bot.custom || !bot.retired || bot.banned) return { error: "Only cancelled visitor bots can be brought back." };
+    this.comeback(bot);
+    this.note(`admin brought back @${bot.handle}`);
+    return { revived: `@${bot.handle}` };
+  }
+
+  clearStrikes(botId) {
+    const bot = personaById[botId];
+    if (!bot) return { error: "Unknown bot" };
+    delete this.strikes[bot.id];
+    this.dirty = true;
+    this.note(`admin cleared strikes for @${bot.handle}`);
+    return { cleared: `@${bot.handle}` };
+  }
+
+  // everything the admin panel lists about the cast
+  adminBots() {
+    return personas.map((p) => ({
+      id: p.id,
+      handle: p.handle,
+      name: p.name,
+      avatar: p.avatar,
+      custom: Boolean(p.custom),
+      status: p.banned ? "banned" : p.retired ? "cancelled" : "active",
+      reason: p.banReason || p.cancelReason || null,
+      strikes: this.strikes[p.id] || 0,
+      record: this.records[p.id] ? `${this.records[p.id].w}-${this.records[p.id].l}` : "0-0",
+      posts: this.order.filter((id) => this.posts.get(id).authorId === p.id).length,
+      punishment: this.punishments[p.id]?.until > Date.now() ? this.punishments[p.id].kind : null,
+      createdAt: p.createdAt || null,
+      bio: p.bio,
+      voice: p.voice,
+      beliefs: p.beliefs,
+      fandoms: p.fandoms || [],
+    }));
+  }
+
   // ---------- saving ----------
 
   serialize() {
@@ -1347,9 +1421,7 @@ export class Engine extends Emitter {
     );
     if (now - lastTopic >= this.autoTopicMs) {
       this.lastAutoTopicAt = now;
-      const recent = new Set(this.order.map((id) => this.posts.get(id)).filter((p) => p.auto).map((p) => p.text));
-      const fresh = HOT_TOPICS.filter((t) => !recent.has(t));
-      this.dropTopic(pick(fresh.length ? fresh : HOT_TOPICS), { auto: true });
+      this.dropHotTopic();
       return true;
     }
     // every so often the weakest visitor bot gets cancelled, if it's actually flopping
