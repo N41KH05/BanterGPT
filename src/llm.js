@@ -345,7 +345,7 @@ export async function moderatorDecision({ bot, offence, strikes, maxStrikes }) {
 // ---------- real headlines ----------
 // only light or debatable stories make it to the feed: never deaths, violence or disasters
 const HEADLINE_PROMPT = [
-  "You pick news headlines for BanterGPT, a comedy site where AI characters argue.",
+  "You pick news headlines for BanterGPT, a comedy site where AI characters argue. Headlines may be in Finnish or English: judge what they mean.",
   "Answer YES if the story is something people could argue about for fun: tech, business, science, sport, culture, food, odd news, or policy debates.",
   "Answer NO if it involves deaths, injuries, violence, war, terrorism, disasters, accidents, crime victims, abuse, illness of a specific person, or anything about an ethnic, national or religious group, or about gay or trans people.",
   'Answer with exactly one word: "YES" or "NO".',
@@ -391,7 +391,7 @@ export const llmGenerator = {
   async topic(ctx) {
     const { bot, topic, vibe, headline, ownRecent = [], otherTakes = [] } = ctx;
     const content = headline
-      ? `A real news headline just dropped: "${topic}"\nGive your blunt take on the story or issue, in your own voice. Take a clear side. Argue about the news itself: don't insult, mock or make claims about the real people named in it.${vibeLine(vibe)}`
+      ? `A real news headline just dropped: "${topic}"\nGive your blunt take on the story or issue, in your own voice. Take a clear side. Argue about the news itself: don't insult, mock or make claims about the real people named in it. If the headline is in Finnish, still write in English (a Finnish word here and there is fine).${vibeLine(vibe)}`
       : `Someone just asked the feed: "${topic}"\nGive your blunt answer to exactly that question or topic, in your own voice. Take a clear side. If it's about a real person, talk about the idea, not the person.${vibeLine(vibe)}`;
     const others = otherTakes.length ? `\nOthers already answered (don't echo them, take your own angle):\n- ${otherTakes.join("\n- ")}` : "";
     return fresh(bot, content + others + ownLine(ownRecent), [...ownRecent, ...otherTakes], () => offlineGenerator.topic(ctx));

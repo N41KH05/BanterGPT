@@ -100,67 +100,27 @@ if (live) {
 
 // ---------- real headlines ----------
 // Every so often (while someone's watching) a real headline from a news feed becomes a topic.
-// Lighter sections by default, plus filters: nothing about deaths, violence or disasters,
-// nothing touching the moderated subjects, and in live mode an AI double-check.
-const FEEDS_SETTING = process.env.BANTER_NEWS_FEEDS ?? "";
-const FEEDS =
-  FEEDS_SETTING.toLowerCase() === "off"
-    ? []
-    : (FEEDS_SETTING ||
-        "https://feeds.bbci.co.uk/news/technology/rss.xml,https://feeds.bbci.co.uk/news/science_and_environment/rss.xml,https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml,https://feeds.bbci.co.uk/news/business/rss.xml")
-        .split(",")
-        .map((f) => f.trim())
-        .filter(Boolean);
+// Feeds, fallbacks and the safety filter live in src/headlines.js.
+const headlines = await import("./src/headlines.js");
+const FEED_GROUPS = headlines.parseFeedSetting(process.env.BANTER_NEWS_FEEDS);
 const HEADLINE_MS = minutes("BANTER_HEADLINE_MINUTES", 90);
-const TRAGEDY =
-  /\b(?:dead|dies|died|death|deaths|deadly|die|kill|kills|killed|killing|murder\w*|shoot\w*|shot|stab\w*|attack\w*|war|wars|bomb\w*|missile\w*|terror\w*|hostage\w*|rape\w*|abuse\w*|assault\w*|victim\w*|crash\w*|disaster\w*|earthquake\w*|flood\w*|wildfire\w*|famine|suicide|overdose|injur\w*|wounded|massacre|genocide|funeral|mourn\w*|tragedy|tragic|cancer|hospital\w*|missing|kidnap\w*|trafficking|child|children|baby|babies|arrest\w*|jail\w*|prison\w*|court|trial|sentenc\w*|police)\b/i;
-const decodeEntities = (t) =>
-  t
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-    .trim();
-async function fetchHeadlines() {
-  const items = [];
-  for (const feed of FEEDS) {
-    try {
-      const res = await fetch(feed, { signal: AbortSignal.timeout(10_000), headers: { "user-agent": "BanterGPT/1.0 (+https://bantergpt.onrender.com)" } });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const xml = await res.text();
-      const source = decodeEntities((xml.match(/<channel>[\s\S]*?<title>([\s\S]*?)<\/title>/) || [])[1] || new URL(feed).hostname);
-      for (const item of xml.match(/<item\b[\s\S]*?<\/item>/g) || []) {
-        const title = decodeEntities((item.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || "");
-        const link = decodeEntities((item.match(/<link>([\s\S]*?)<\/link>/) || [])[1] || "");
-        if (title) items.push({ title, link: /^https?:\/\//.test(link) ? link : "", source: source.replace(/^BBC News - /, "BBC ") });
-      }
-    } catch (err) {
-      console.warn(`[headlines] couldn't read ${feed}: ${err.message}`);
-    }
-  }
-  return items;
-}
 async function maybeHeadline() {
-  if (!FEEDS.length || !clients.size || engine.paused) return;
+  if (!FEED_GROUPS.length || !clients.size || engine.paused) return;
   if (!engine.lastHeadlineAt) engine.lastHeadlineAt = Date.now() - HEADLINE_MS + Math.min(10 * 60_000, HEADLINE_MS); // first one ~10 minutes in
   if (Date.now() - engine.lastHeadlineAt < HEADLINE_MS) return;
   const seen = new Set(engine.headlinesSeen);
-  const candidates = (await fetchHeadlines()).filter(
-    (h) => !seen.has(h.title) && h.title.length >= 20 && h.title.length <= 140 && !TRAGEDY.test(h.title) && !screenText(h.title),
-  );
-  for (const h of candidates.sort(() => Math.random() - 0.5).slice(0, 4)) {
-    if (live && !(await llm.headlineOk(h.title))) {
-      engine.headlinesSeen = [...engine.headlinesSeen, h.title].slice(-300); // don't ask about it again
-      continue;
+  // groups take turns (Finnish news, English news): a random one gets the first shot
+  for (const group of [...FEED_GROUPS].sort(() => Math.random() - 0.5)) {
+    const candidates = (await headlines.fetchGroup(group)).filter((h) => !seen.has(h.title) && headlines.isLightHeadline(h.title, screenText));
+    for (const h of candidates.sort(() => Math.random() - 0.5).slice(0, 3)) {
+      if (live && !(await llm.headlineOk(h.title))) {
+        engine.headlinesSeen = [...engine.headlinesSeen, h.title].slice(-300); // don't ask about it again
+        continue;
+      }
+      engine.dropHeadline(h);
+      console.log(`[headlines] dropped (${h.source}): ${h.title}`);
+      return;
     }
-    engine.dropHeadline(h);
-    console.log(`[headlines] dropped: ${h.title}`);
-    return;
   }
   engine.lastHeadlineAt = Date.now() - HEADLINE_MS + 15 * 60_000; // nothing suitable: try again in 15 minutes
 }
