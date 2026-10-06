@@ -1747,6 +1747,7 @@ function setupBotDialog() {
       bio: f.get("bio"),
       voice: f.get("voice"),
       beliefs: f.getAll("belief"),
+      fandoms: String(f.get("fandoms") || ""),
       rivals: [...picks.rivals],
       allies: [...picks.allies],
     };

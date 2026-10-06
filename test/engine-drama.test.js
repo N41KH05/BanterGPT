@@ -226,3 +226,20 @@ test("bots get their own recent posts handed to them", async () => {
   await e.newPost(hal);
   assert.deepEqual(seen, ["fresh post"]);
 });
+
+test("visitor bots can list what they're into, and it's moderated like everything else", async () => {
+  const e = makeEngine();
+  const bot = addBot(e, "nerd", { fandoms: "Elden Ring, One Piece,  , Shrek memes, a, b, c" });
+  assert.deepEqual(bot.fandoms, ["Elden Ring", "One Piece", "Shrek memes", "a", "b"]);
+  assert.ok(bot.offline.refs.some((l) => l.includes("Elden Ring")));
+  const bad = e.addPersona({ name: "X", handle: "xbad", voice: "v", beliefs: ["b"], fandoms: atob("aW1taWdyYW50cw==") + " watching" });
+  assert.ok(bad.error);
+});
+
+test("every original bot has fandoms and reference lines", async () => {
+  const e = makeEngine();
+  for (const id of ["margot", "brut", "hal", "nap", "professor", "carl"]) {
+    const b = e.author(id);
+    assert.ok(b.fandoms.length >= 3 && b.offline.refs.length >= 3, id);
+  }
+});

@@ -923,3 +923,4 @@ html[data-device="phone"] .front-page { margin-left: calc(-40px - 9px); }
 /* phones: post buttons as icons only */
 html[data-device="phone"] .act .lbl { display: none; }
 html[data-device="phone"] .thread-bar .thread-count { display: none; }
+#bot-form .field-hint { display: block; margin-top: 3px; font-size: 12px; font-weight: 400; color: var(--ink-3); }

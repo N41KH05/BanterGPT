@@ -6,7 +6,7 @@ import { screenText, REFUSAL } from "./moderation.js";
 
 export const MAX_CUSTOM = 12; // past this, the worst-performing visitor bot gets cancelled
 
-const LIMITS = { name: 24, handle: 20, bio: 100, voice: 220, belief: 100 };
+const LIMITS = { name: 24, handle: 20, bio: 100, voice: 220, belief: 100, fandom: 40 };
 const COLORS = ["#c2410c", "#0f766e", "#7c3aed", "#be185d", "#15803d", "#1d4ed8", "#a16207", "#475569"];
 
 const clean = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -23,6 +23,11 @@ export function buildCustomPersona(input, existing) {
     .map((b) => clean(b, LIMITS.belief).replace(/[.!]+$/, ""))
     .filter(Boolean)
     .slice(0, 4);
+  // what the bot is into (games, shows, anime, memes): optional, comma separated
+  const fandoms = (Array.isArray(input.fandoms) ? input.fandoms : String(input.fandoms ?? "").split(","))
+    .map((f) => clean(f, LIMITS.fandom))
+    .filter(Boolean)
+    .slice(0, 5);
 
   if (name.length < 2) return { error: "Give your bot a name." };
   if (!/^[A-Za-z0-9_]{3,20}$/.test(handle)) return { error: "Handle: 3–20 letters, numbers or underscores." };
@@ -31,9 +36,9 @@ export function buildCustomPersona(input, existing) {
 
   // a bot built around a slur shouldn't exist at all, so reject rather than star it out
   if (hasBlocked(name) || hasBlocked(handle) || hasBlocked(avatar)) return { error: "Pick a different name or handle." };
-  if ([bio, voice, ...beliefs].some(hasBlocked)) return { error: "Keep slurs out of your bot." };
+  if ([bio, voice, ...beliefs, ...fandoms].some(hasBlocked)) return { error: "Keep slurs out of your bot." };
   // no bots about race, ethnicity, religion, nationality, sexuality or hate movements
-  if (screenText(name, handle, avatar, bio, voice, beliefs)) return { error: REFUSAL };
+  if (screenText(name, handle, avatar, bio, voice, beliefs, fandoms)) return { error: REFUSAL };
 
   const taken = existing.some(
     (p) => p.handle.toLowerCase() === handle.toLowerCase() || p.id === handle.toLowerCase() || handle.toLowerCase() === "the_audience",
@@ -54,6 +59,7 @@ export function buildCustomPersona(input, existing) {
     bio: bio || `${name}. Opinions included.`,
     voice,
     beliefs,
+    fandoms,
     interests: beliefs.flatMap((b) => b.toLowerCase().match(/[a-z]{4,}/g) || []).slice(0, 12),
     rivals,
     allies,
@@ -100,7 +106,17 @@ export function styleFor(p) {
 function genericBank(p) {
   const b = p.beliefs.map((x) => x.charAt(0).toLowerCase() + x.slice(1));
   const any = (i) => b[i % b.length];
+  const f = p.fandoms?.length ? p.fandoms : null;
+  const fan = (i) => f[i % f.length];
   return {
+    refs: f
+      ? [
+          `this thread has worse writing than late-season ${fan(0)}`,
+          `${fan(1)} fans would never let this take slide`,
+          `I've seen better arguments in the ${fan(2)} comments section`,
+          `reminder that ${fan(0)} did it first and did it better`,
+        ]
+      : [],
     takes: [
       `${any(0)}. fight me`,
       `unpopular opinion: ${any(1)}`,

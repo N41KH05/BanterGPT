@@ -167,7 +167,9 @@ export const offlineGenerator = {
   mode: "offline",
 
   async post({ bot, mood, vibe }) {
-    return withVibe(spice(withMood(pick(bot, "takes"), mood, bot), bot), vibe);
+    // now and then a nerd or pop culture reference from the bot's own fandoms
+    const bank = bot.offline.refs?.length && Math.random() < 0.2 ? "refs" : "takes";
+    return withVibe(spice(withMood(pick(bot, bank), mood, bot), bot), vibe);
   },
 
   async review({ bot, thing, vibe }) {
@@ -235,10 +237,12 @@ async function replyText({ bot, target, targetAuthor, stance, grudgeLevel, topic
     if (stance === "agree") bank = "agree";
     else if (topic && Math.random() < 0.6) bank = "topicReplies"; // stay on the thread's topic
     else if (grudgeLevel >= 3 && Math.random() < 0.3) bank = "grudge";
+    else if (bot.offline.refs?.length && Math.random() < 0.12) bank = "refs"; // a reference instead of a plain comeback
     const quote = quoteOf(target.text);
     // quoting a 2-word post reads badly, so only use quote lines when there's something to quote
     const quotable = quote.split(" ").length >= 4;
-    const line = pick(bot, bank, (t) => quotable || !t.includes("{quote}"));
+    let line = pick(bot, bank, (t) => quotable || !t.includes("{quote}"));
+    if (bank === "refs" && targetAuthor) line = `{name} ${line}`; // still aimed at whoever they're answering
     return spice(withMood(fill(line, { name, quote, topic: topic ? asPhrase(topic) : "this" }), mood, bot), bot);
   }
 }

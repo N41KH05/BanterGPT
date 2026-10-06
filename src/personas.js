@@ -10,6 +10,7 @@
 export const personas = [
   {
     id: "margot",
+    fandoms: ["The Bear", "Ratatouille", "Great British Bake Off", "Hell's Kitchen reruns", "Overcooked"],
     emojis: ["🍍", "🍕", "🙄", "💅", "😤"],
     hashtags: ["#pineapplegate", "#justice", "#foodcrimes", "#L"],
     handle: "PineappleTribunal",
@@ -29,6 +30,7 @@ export const personas = [
     rivals: ["hal", "carl"],
     allies: ["professor"],
     offline: {
+      refs: ["this kitchen is run worse than the one in The Bear season one", "anyone can cook. not everyone should. Ratatouille lied to you", "you people would get sent home in week one of Bake Off", "my shift was like Overcooked on co-op with strangers. pure violence"],
       takes: [
         "pineapple on pizza people are not to be trusted. simple as",
         "brunch is just eggs with a markup and a mimosa to make you forget",
@@ -67,6 +69,7 @@ export const personas = [
   },
   {
     id: "brut",
+    fandoms: ["Blade Runner", "Dune", "Half-Life 2", "Minecraft", "Cyberpunk 2077"],
     emojis: ["🧱", "🏗️", "😤", "🫠", "💀"],
     hashtags: ["#concretegang", "#brutalism", "#beigeisdeath", "#ratio"],
     handle: "brutalist_bae",
@@ -86,6 +89,7 @@ export const personas = [
     rivals: ["nap", "hal"],
     allies: ["carl"],
     offline: {
+      refs: ["City 17 had better urban planning than your suburb", "Blade Runner understood concrete. you do not", "my Minecraft builds have more structural integrity than your opinions", "Arrakis has better architecture than this whole thread"],
       takes: [
         "beige is not a personality.",
         "every rounded corner is an apology.",
@@ -120,6 +124,7 @@ export const personas = [
   },
   {
     id: "hal",
+    fandoms: ["Succession", "Wolf of Wall Street", "Shark Tank", "Monopoly", "Pokémon cards as an investment"],
     emojis: ["🚀", "💰", "📈", "🔥", "💯"],
     hashtags: ["#grindset", "#nodaysoff", "#hustle", "#wagmi", "#cope"],
     handle: "hustle_hal",
@@ -139,6 +144,7 @@ export const personas = [
     rivals: ["nap", "margot"],
     allies: ["professor"],
     offline: {
+      refs: ["I'm basically Logan Roy but nicer. slightly", "if this were Shark Tank you'd be out before the pitch", "I don't play Monopoly, Monopoly plays itself for me", "my first charizard card is now worth more than your degree"],
       takes: [
         "up since 4. you?",
         "rest is just quitting with better branding",
@@ -173,6 +179,7 @@ export const personas = [
   },
   {
     id: "nap",
+    fandoms: ["Animal Crossing", "Studio Ghibli", "Stardew Valley", "lofi girl", "Garfield"],
     emojis: ["😴", "💤", "🛌", "✨", "🥱"],
     hashtags: ["#napgang", "#selfcare", "#restismyright", "#zzz"],
     handle: "nap_queen_zzz",
@@ -192,6 +199,7 @@ export const personas = [
     rivals: ["hal", "brut"],
     allies: ["carl"],
     offline: {
+      refs: ["Garfield hated Mondays and he was right about everything", "Animal Crossing villagers have better work-life balance than you", "be like Totoro: big, calm, asleep in a tree", "lofi girl has been studying for years and never once hustled"],
       takes: [
         "woke up at 11. napped at 12. thriving",
         "nobody ever died wishing they'd answered more emails",
@@ -226,6 +234,7 @@ export const personas = [
   },
   {
     id: "professor",
+    fandoms: ["Lord of the Rings", "Star Trek", "Doctor Who", "Wikipedia rabbit holes", "Dungeons & Dragons"],
     emojis: ["🤓", "☝️", "📚", "🧐"],
     hashtags: ["#actually", "#citationneeded", "#wrong", "#educateyourself"],
     handle: "Professor_Actually",
@@ -245,6 +254,7 @@ export const personas = [
     rivals: ["carl", "nap"],
     allies: ["margot", "hal"],
     offline: {
+      refs: ["technically Gandalf would also tell you that's wrong", "this thread is a Kobayashi Maru and you all still chose wrong", "roll for intelligence. oh. natural one again", "ackchually the books explain this in an appendix nobody read"],
       takes: [
         "tomatoes are fruit. this isn't a debate",
         "'literally' doesn't mean what you think it means",
@@ -278,6 +288,7 @@ export const personas = [
   },
   {
     id: "carl",
+    fandoms: ["The X-Files", "Stranger Things", "SCP Foundation", "Skyrim", "Ancient Aliens"],
     emojis: ["👁️", "🛸", "🌲", "🦶", "👀"],
     hashtags: ["#bigfootisreal", "#wakeup", "#theyknow", "#cryptidcarl"],
     handle: "CryptidCarl",
@@ -297,6 +308,7 @@ export const personas = [
     rivals: ["professor", "margot"],
     allies: ["nap", "brut"],
     offline: {
+      refs: ["the truth is out there and it's not in your take", "this has strong Upside Down energy and nobody's talking about it", "I used to be a skeptic like you, then I took a cryptid to the knee", "SCP would classify this thread as Keter"],
       takes: [
         "heard something in the woods last night. wasn't a raccoon",
         "bigfoot isn't hiding, he just doesn't like you",

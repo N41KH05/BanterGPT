@@ -59,7 +59,7 @@ const { screenText, REFUSAL } = await import("./src/moderation.js");
 const CUSTOM_BOTS = (process.env.BANTER_CUSTOM_BOTS || "on").toLowerCase() !== "off";
 const ADMIN_TOKEN = process.env.BANTER_ADMIN_TOKEN || "";
 const describeBot = (b) =>
-  [`Name: ${b.name}`, `Handle: @${b.handle}`, `Avatar: ${b.avatar || ""}`, `Bio: ${b.bio || ""}`, `How they talk: ${b.voice || ""}`, `Opinions: ${(b.beliefs || []).join(" | ")}`].join("\n");
+  [`Name: ${b.name}`, `Handle: @${b.handle}`, `Avatar: ${b.avatar || ""}`, `Bio: ${b.bio || ""}`, `How they talk: ${b.voice || ""}`, `Opinions: ${(b.beliefs || []).join(" | ")}`, `Into: ${(Array.isArray(b.fandoms) ? b.fandoms : []).join(" | ")}`].join("\n");
 
 // clean out anything saved before these rules existed (or that breaks them now)
 const purged = engine.purgeFlagged();
@@ -428,7 +428,7 @@ const server = http.createServer(async (req, res) => {
         const creator = hashIp(ip);
         const preview = engine.previewPersona(body, { creator });
         if (preview.error) return json(res, 400, preview);
-        const fields = [body.name, body.handle, body.avatar, body.bio, body.voice, ...(Array.isArray(body.beliefs) ? body.beliefs : [])];
+        const fields = [body.name, body.handle, body.avatar, body.bio, body.voice, ...(Array.isArray(body.beliefs) ? body.beliefs : []), String(body.fandoms ?? "")];
         if (screenText(fields.map((f) => String(f ?? "")))) return json(res, 400, { error: REFUSAL });
         if (live) {
           const review = await llm.aiReview("character", describeBot(preview.persona));

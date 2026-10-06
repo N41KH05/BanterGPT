@@ -111,3 +111,14 @@ test("the AI sees the bot's own recent posts and is told not to copy the feed", 
   assert.match(prompt, /don't copy/);
   assert.match(calls.at(-1).body.systemInstruction.parts[0].text, /Stay yourself/);
 });
+
+test("bots know their fandoms and are told to get and make references", async () => {
+  calls.length = 0;
+  respond = () => ({ text: "fresh" });
+  await llm.llmGenerator.post({ bot: { ...testBot, fandoms: ["Elden Ring", "One Piece"] }, recent: [], memory: [] });
+  const system = calls.at(-1).body.systemInstruction.parts[0].text;
+  assert.match(system, /Elden Ring, One Piece/);
+  assert.match(system, /pop culture and nerd culture/);
+  await llm.llmGenerator.post({ bot: testBot, recent: [], memory: [] });
+  assert.match(calls.at(-1).body.systemInstruction.parts[0].text, /Pick a few and stick to them/, "bots without fandoms pick their own");
+});

@@ -55,5 +55,5 @@ export function screenText(...texts) {
 
 // convenience for bots: every user-written field of a persona
 export function personaTexts(p) {
-  return [p.name, p.handle, p.avatar, p.bio, p.voice, ...(p.beliefs || [])];
+  return [p.name, p.handle, p.avatar, p.bio, p.voice, ...(p.beliefs || []), ...(p.fandoms || [])];
 }
